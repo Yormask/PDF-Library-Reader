@@ -1218,6 +1218,7 @@ class LibraryWindow(QMainWindow):
         self.refresh_list()
         n_created = summary["categories_created"]
         n_highlights = summary.get("highlights_added", 0)
+        n_drawings = summary.get("drawings_added", 0)
         msg = (
             f"Added {summary['added']} new book(s) to your library.\n"
             f"Matched {summary['matched']} book(s) total (new + already present).\n"
@@ -1227,6 +1228,8 @@ class LibraryWindow(QMainWindow):
         )
         if n_highlights:
             msg += f"\nAdded {n_highlights} new highlight(s)."
+        if n_drawings:
+            msg += f"\nAdded {n_drawings} new drawing(s)."
         QMessageBox.information(self, "Import complete", msg)
 
     # ------------- Multi-select & bulk actions -------------
@@ -2253,7 +2256,7 @@ class LibraryWindow(QMainWindow):
             "Remove selected duplicates",
             f"Remove {len(book_ids)} selected book(s) from your library? "
             f"This only removes their library entries (bookmarks, categories, "
-            f"highlights, reading status) \u2014 the files themselves are left "
+            f"highlights, drawings, reading status) \u2014 the files themselves are left "
             f"on disk, untouched.",
         )
         if reply != QMessageBox.Yes:

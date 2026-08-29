@@ -185,10 +185,11 @@ and a distraction-free "simple text" reading mode.
   the file, however it was scoped at export time):
   - **Full Archive** — a ZIP containing the actual PDF files plus a
     manifest of everything that isn't already encoded in their filenames:
-    categories, bookmarks, reading status, favorite, annotation, and
-    reading progress. The real "move (or back up) my whole library" option
-    — importing onto a fresh device with zero existing books extracts the
-    PDFs and restores everything else automatically.
+    categories, bookmarks, reading status, favorite, annotation, reading
+    progress, saved highlights, and drawn annotations. The real "move (or
+    back up) my whole library" option — importing onto a fresh device
+    with zero existing books extracts the PDFs and restores everything
+    else automatically.
   - **Selected Books** — the same as Full Archive (actual PDF files plus
     all their metadata), but scoped to whatever you've currently selected
     via **Select** mode (click, Ctrl+click, Shift+click for a range). The
@@ -290,8 +291,9 @@ and a distraction-free "simple text" reading mode.
   highlighted in that book as a standalone Markdown notes file, similar to
   Kindle's "My Clippings" — handy for actually revisiting what you
   highlighted, separately from the archive export/import (which moves your
-  library around and carries highlights along automatically, but only in
-  the export variants that include your reading data, not the Share ones).
+  library around and carries highlights and drawings along automatically,
+  but only in the export variants that include your reading data, not the
+  Share ones).
 - **Draw** — a manual, freehand alternative/companion to text highlighting:
   pen strokes plus box, circle, triangle, and line shapes, drawn directly
   on top of the page. Since it marks up pixel positions rather than

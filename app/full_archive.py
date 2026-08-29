@@ -1,8 +1,8 @@
 """Full backup archive: a ZIP containing the actual PDF files plus a
 manifest of everything that isn't already encoded in their filenames --
 categories, bookmarks, reading status, favorite, annotation, reading
-progress, and saved highlights. The natural way to move (or back up) an
-entire library, not just its categorization.
+progress, saved highlights, and drawn annotations. The natural way to
+move (or back up) an entire library, not just its categorization.
 """
 import json
 import os
@@ -20,17 +20,17 @@ def build_manifest(db, book_ids=None, include_reading_state=True):
     """Returns (manifest_dict, {filename: source_filepath}).
 
     include_reading_state controls whether each book's personal reading
-    data -- status, favorite flag, last-read page, and saved highlights --
-    is included. That data makes sense for a backup of your own library
-    (restoring it to yourself elsewhere should put you back where you
-    left off), but imposing it on someone you're sharing books with
-    doesn't: they'd end up with books mysteriously pre-marked "Finished"
-    or already favorited, resuming mid-book at a page they never reached,
-    or covered in highlights they never made. Pass False for a
-    share-oriented export -- the importing side already treats a missing
-    status/is_favorite/last_page/highlights as "leave it alone", so
-    simply omitting them here is enough; no changes needed on the import
-    path.
+    data -- status, favorite flag, last-read page, saved highlights, and
+    drawn annotations -- is included. That data makes sense for a backup
+    of your own library (restoring it to yourself elsewhere should put
+    you back where you left off), but imposing it on someone you're
+    sharing books with doesn't: they'd end up with books mysteriously
+    pre-marked "Finished" or already favorited, resuming mid-book at a
+    page they never reached, or covered in someone else's highlights and
+    drawings. Pass False for a share-oriented export -- the importing
+    side already treats a missing status/is_favorite/last_page/
+    highlights/drawings as "leave it alone", so simply omitting them here
+    is enough; no changes needed on the import path.
     """
     if book_ids is None:
         book_ids = [b["id"] for b in db.get_books()]
@@ -63,6 +63,13 @@ def build_manifest(db, book_ids=None, include_reading_state=True):
                     "style": h.get("style") or "fill",
                 }
                 for h in db.get_highlights(book_id)
+            ]
+            entry["drawings"] = [
+                {
+                    "page_number": d["page_number"], "tool": d["tool"], "color": d["color"],
+                    "opacity": d["opacity"], "stroke_width": d["stroke_width"], "points": d["points"],
+                }
+                for d in db.get_drawings(book_id)
             ]
         books_out[filename] = entry
         for c in cats:
@@ -145,6 +152,7 @@ def apply_archive(db, zip_path, destination_dir):
 
         matched, added, skipped, bookmarks_added = 0, 0, 0, 0
         highlights_added = 0
+        drawings_added = 0
         for filename, meta in books.items():
             book = db.get_book_by_filename(filename)
             if book is None:
@@ -212,8 +220,22 @@ def apply_archive(db, zip_path, destination_dir):
                 )
                 highlights_added += 1
 
+            existing_drawings = {
+                (d["page_number"], d["tool"], d["color"], json.dumps(d["points"]))
+                for d in db.get_drawings(book["id"])
+            }
+            for d in meta.get("drawings", []):
+                key = (d["page_number"], d["tool"], d["color"], json.dumps(d["points"]))
+                if key in existing_drawings:
+                    continue
+                db.add_drawing(
+                    book["id"], d["page_number"], d["tool"], d["color"],
+                    d.get("opacity", 0.4), d.get("stroke_width", 3.0), d["points"],
+                )
+                drawings_added += 1
+
     return {
         "matched": matched, "added": added, "skipped": skipped,
         "categories_created": categories_created, "bookmarks_added": bookmarks_added,
-        "highlights_added": highlights_added,
+        "highlights_added": highlights_added, "drawings_added": drawings_added,
     }
