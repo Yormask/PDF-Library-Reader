@@ -400,11 +400,18 @@ deletes the underlying PDF file.
 | Scroll         | Turn page (when Fit to Screen is on) or pan (when zoomed in) |
 | Middle-click + Scroll | Turn page even while zoomed in |
 | Ctrl + Scroll  | Zoom in/out                   |
-| Ctrl + =       | Increase text size / zoom in  |
-| Ctrl + -       | Decrease text size / zoom out |
+| =              | Increase text size / zoom in  |
+| -              | Decrease text size / zoom out |
+| F              | Toggle Fit to Screen          |
 | Ctrl + D       | Add a bookmark on this page   |
 | Ctrl + Z       | Undo the last drawing stroke (while in Draw mode) |
 | Click + drag   | Pan around a zoomed-in page   |
+
+Every shortcut in this table except the Scroll-based ones (mouse-wheel
+interactions, not part of the customizable catalog) can be changed or
+cleared in the Keyboard Shortcuts dialog — including the zoom keys,
+if you'd rather have them require a modifier (e.g. `Ctrl+=`/`Ctrl+-`)
+than the bare `=`/`-` keys they default to.
 
 ## Book details panel
 

@@ -31,8 +31,9 @@ CATALOG = {
     # --- Reader window ---
     "reader.prev_page": ("Previous Page", "Left", "reader"),
     "reader.next_page": ("Next Page", "Right", "reader"),
-    "reader.zoom_in": ("Increase Text Size / Zoom In", "Ctrl+=", "reader"),
-    "reader.zoom_out": ("Decrease Text Size / Zoom Out", "Ctrl+-", "reader"),
+    "reader.zoom_in": ("Increase Text Size / Zoom In", "=", "reader"),
+    "reader.zoom_out": ("Decrease Text Size / Zoom Out", "-", "reader"),
+    "reader.toggle_fit_to_screen": ("Toggle Fit to Screen", "F", "reader"),
     "reader.add_bookmark": ("Add Bookmark", "Ctrl+D", "reader"),
     "reader.toggle_select_text": ("Toggle Select Text Mode", "", "reader"),
     "reader.toggle_simple_text": ("Toggle Simple Text Mode", "", "reader"),

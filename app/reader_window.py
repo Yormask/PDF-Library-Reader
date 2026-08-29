@@ -875,6 +875,19 @@ class ReaderWindow(QMainWindow):
         prev_action = QAction("\u25c0 Prev", self)
         prev_action.triggered.connect(self.prev_page)
         toolbar.addAction(prev_action)
+        # Also associated directly with the window itself, not just the
+        # toolbar -- a QAction's keyboard shortcut stops being routable
+        # once every widget it's associated with is hidden, even though
+        # the action stays enabled and reports the correct shortcut, and
+        # Focus Mode hides the toolbar. The window itself is never
+        # hidden, so this keeps the shortcut alive there too. (Belt and
+        # suspenders here specifically: Prev/Next also has an independent
+        # fix in _maybe_handle_page_turn_key for the OTHER way this class
+        # of bug shows up -- a focused child widget like QScrollArea
+        # consuming the arrow key itself before any shortcut mechanism
+        # sees it. Two different mechanisms, two different failure modes,
+        # both needed for page-turning to be genuinely unbreakable.)
+        self.addAction(prev_action)
         self.prev_action = prev_action
 
         self.page_spin = QSpinBox()
@@ -890,6 +903,7 @@ class ReaderWindow(QMainWindow):
         next_action = QAction("Next \u25b6", self)
         next_action.triggered.connect(self.next_page)
         toolbar.addAction(next_action)
+        self.addAction(next_action)  # see prev_action's comment above
         self.next_action = next_action
 
         toolbar.addSeparator()
@@ -898,12 +912,14 @@ class ReaderWindow(QMainWindow):
         dec_action.setToolTip("Decrease text size / zoom out")
         dec_action.triggered.connect(self.decrease_text_size)
         toolbar.addAction(dec_action)
-        self.dec_action = dec_action
+        self.addAction(dec_action)  # see prev_action's comment above -- this one has no
+        self.dec_action = dec_action  # independent fallback, so this is the ONLY thing keeping it working in Focus Mode
 
         inc_action = QAction("A+", self)
         inc_action.setToolTip("Increase text size / zoom in")
         inc_action.triggered.connect(self.increase_text_size)
         toolbar.addAction(inc_action)
+        self.addAction(inc_action)  # see prev_action's comment above -- same as dec_action
         self.inc_action = inc_action
 
         toolbar.addSeparator()
@@ -1093,6 +1109,14 @@ class ReaderWindow(QMainWindow):
         self.scroll_area.viewport().installEventFilter(self)
         self.text_browser.viewport().installEventFilter(self)
         self.page_label.installEventFilter(self)
+        # QScrollArea and QTextBrowser both default to a focus policy that
+        # lets them hold keyboard focus and both have their own built-in
+        # arrow-key handling -- installed here (on the widgets themselves,
+        # where focus and keyPressEvent actually land, not just their
+        # viewports) so _maybe_handle_page_turn_key gets first look at
+        # Left/Right before either widget's own handling can consume it.
+        self.scroll_area.installEventFilter(self)
+        self.text_browser.installEventFilter(self)
 
         # A few actions are keyboard-only -- no toolbar button of their own,
         # but still customizable like everything else in the catalog.
@@ -1106,6 +1130,8 @@ class ReaderWindow(QMainWindow):
         self.close_window_shortcut.activated.connect(self.close)
         self.undo_drawing_shortcut = QShortcut(QKeySequence(), self)
         self.undo_drawing_shortcut.activated.connect(self._undo_drawing_shortcut_triggered)
+        self.toggle_fit_shortcut = QShortcut(QKeySequence(), self)
+        self.toggle_fit_shortcut.activated.connect(self.fit_btn.click)
 
         self.apply_shortcuts()
 
@@ -1130,6 +1156,7 @@ class ReaderWindow(QMainWindow):
             (self.next_highlight_action, "reader.next_highlight"),
             (self.prev_highlight_action, "reader.prev_highlight"),
             (self.undo_drawing_shortcut, "reader.undo_drawing"),
+            (self.toggle_fit_shortcut, "reader.toggle_fit_to_screen"),
         )
         for target, action_id in bindings:
             seq = QKeySequence(effective_shortcut(action_id, overrides))
@@ -1591,14 +1618,7 @@ class ReaderWindow(QMainWindow):
         # the CURRENT (possibly user-customized) shortcut, not a hardcoded
         # Left/Right, so a remapped key isn't silently shadowed by the old
         # default still working here underneath it.
-        seq = QKeySequence(event.keyCombination())
-        if not seq.isEmpty() and seq == self.prev_action.shortcut():
-            self.prev_page()
-            event.accept()
-            return
-        if not seq.isEmpty() and seq == self.next_action.shortcut():
-            self.next_page()
-            event.accept()
+        if self._maybe_handle_page_turn_key(event):
             return
         if event.matches(QKeySequence.Copy) and self.selected_text:
             self.copy_selection()
@@ -1617,7 +1637,40 @@ class ReaderWindow(QMainWindow):
             return
         super().keyPressEvent(event)
 
+    def _maybe_handle_page_turn_key(self, event):
+        """True (and turns the page) if `event` matches the current
+        Prev/Next Page shortcut, checked against the live QAction shortcut
+        rather than a hardcoded Left/Right so a user-remapped key is
+        honored here too. Shared by keyPressEvent (the top-level fallback)
+        and eventFilter (the actual fix): QScrollArea and QTextBrowser
+        both default to a focus policy that lets them grab keyboard focus
+        and both have their own built-in arrow-key handling (scrolling
+        the view, moving a text cursor) that ACCEPTS the key itself,
+        which stops it from ever bubbling up to this window's own
+        keyPressEvent at all -- that's exactly the bug where page-turning
+        stopped working once zoomed in (real scrollable content makes
+        QScrollArea's own arrow-key scrolling kick in) or in Simple Text
+        mode after clicking into the text. keyPressEvent's own check
+        alone was never reachable in those cases; catching it earlier, in
+        an event filter installed directly on those two widgets, is what
+        actually closes the gap."""
+        seq = QKeySequence(event.keyCombination())
+        if seq.isEmpty():
+            return False
+        if seq == self.prev_action.shortcut():
+            self.prev_page()
+            event.accept()
+            return True
+        if seq == self.next_action.shortcut():
+            self.next_page()
+            event.accept()
+            return True
+        return False
+
     def eventFilter(self, obj, event):
+        if event.type() == QEvent.KeyPress and obj in (self.scroll_area, self.text_browser):
+            if self._maybe_handle_page_turn_key(event):
+                return True
         if event.type() == QEvent.Wheel and obj in (
             self.scroll_area.viewport(),
             self.text_browser.viewport(),
