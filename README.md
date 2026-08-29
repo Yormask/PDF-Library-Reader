@@ -292,6 +292,48 @@ and a distraction-free "simple text" reading mode.
   highlighted, separately from the archive export/import (which moves your
   library around and carries highlights along automatically, but only in
   the export variants that include your reading data, not the Share ones).
+- **Draw** — a manual, freehand alternative/companion to text highlighting:
+  pen strokes plus box, circle, triangle, and line shapes, drawn directly
+  on top of the page. Since it marks up pixel positions rather than
+  recognized text, it works on any page, including a scanned page with no
+  text layer at all — the one case regular Select Text highlighting can't
+  help with. Click **Draw** in the toolbar to open a second toolbar row
+  with the five tools, a color swatch, an opacity slider (with a live "N%"
+  readout next to it), and a pen/outline width control — your last-used
+  choices are remembered across sessions, the same as the highlight color.
+  Draw mode and Select Text mode are mutually exclusive (turning one on
+  turns the other off, since both bind a plain click-drag on the page to
+  something different); Simple Text mode disables drawing entirely, for
+  the same reason it disables Select Text mode.
+
+  Drawing works as a draft, the same shape as text highlighting (drag to
+  select text, then click Save Highlight to make it permanent): nothing
+  you draw is saved until you click **Save Drawn Highlight**. Draw as many
+  strokes and shapes as you like first — **Undo** (or Ctrl+Z, customizable
+  like any other shortcut) removes the most recent one, **Clear** discards
+  everything drawn since the last save on that page — and if you leave
+  Draw mode, switch to Select Text mode, or turn the page without saving,
+  the draft simply disappears, the same as an unsaved text selection.
+
+  Once saved, a drawing shows up in the same **Highlights** list in the
+  Bookmarks/Highlights panel as text highlights do — sorted together by
+  page, not in two separate groups — so it's all in one place rather than
+  drawings only being reachable by right-clicking them on the page. From
+  that list, double-click jumps to its page, right-click offers **Edit
+  Drawing...** (color, opacity, and width — its shape and position aren't
+  editable this way, so correcting those still means deleting and
+  redrawing) and **Delete Drawing**, and **Remove selected highlight**
+  works on a selected drawing entry exactly like it does on a text one.
+  Ctrl+]/Ctrl+[ (jump to next/previous highlight) cycle through drawings
+  too, in the same page order as the list. Right-clicking a drawing
+  directly on the page (only reachable while Draw mode is on, same
+  convention as right-clicking a highlight only working in Select Text
+  mode) still works as a shortcut for the same delete. Under the hood,
+  drawings and highlights stay in separate database tables — a highlight
+  is stored as a list of rectangles, and forcing a drawn ellipse or
+  triangle through that same representation would flatten it into a
+  plain rectangle, losing its actual shape — but that's invisible from
+  the panel, which presents both as one unified, page-ordered list.
 - **Two-Page View** — shows two pages side by side like a book spread,
   handy on a wide screen. Prev/Next, jumping to a specific page, and
   scrolling past the edge all move by the full spread rather than one page
@@ -359,6 +401,7 @@ deletes the underlying PDF file.
 | Ctrl + =       | Increase text size / zoom in  |
 | Ctrl + -       | Decrease text size / zoom out |
 | Ctrl + D       | Add a bookmark on this page   |
+| Ctrl + Z       | Undo the last drawing stroke (while in Draw mode) |
 | Click + drag   | Pan around a zoomed-in page   |
 
 ## Book details panel

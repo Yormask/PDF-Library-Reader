@@ -79,6 +79,18 @@ class Database:
                 created_date TEXT NOT NULL,
                 FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
             );
+            CREATE TABLE IF NOT EXISTS drawings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                book_id INTEGER NOT NULL,
+                page_number INTEGER NOT NULL,
+                tool TEXT NOT NULL,
+                color TEXT NOT NULL,
+                opacity REAL NOT NULL DEFAULT 0.4,
+                stroke_width REAL NOT NULL DEFAULT 3.0,
+                points TEXT NOT NULL,
+                created_date TEXT NOT NULL,
+                FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
+            );
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
                 value TEXT
@@ -622,6 +634,59 @@ class Database:
 
     def delete_highlight(self, highlight_id):
         self.conn.execute("DELETE FROM highlights WHERE id = ?", (highlight_id,))
+        self.conn.commit()
+
+    # ---------------- Drawings (freehand pen / shape annotations) ----------------
+    def add_drawing(self, book_id, page_number, tool, color, opacity, stroke_width, points):
+        """points: a JSON-serializable list of [x, y] pairs in the page's
+        own PDF-point coordinate space (zoom-independent, so a saved
+        drawing redraws correctly at any zoom level later) -- for "pen"
+        this is the full freehand path; for "rectangle"/"ellipse"/
+        "triangle"/"line" it's just the two drag corners the shape's
+        bounding box was defined by."""
+        now = datetime.now().isoformat()
+        cur = self.conn.execute(
+            "INSERT INTO drawings (book_id, page_number, tool, color, opacity, stroke_width, points, created_date) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (book_id, page_number, tool, color, opacity, stroke_width, json.dumps(points), now),
+        )
+        self.conn.commit()
+        return cur.lastrowid
+
+    def get_drawings_for_page(self, book_id, page_number):
+        cur = self.conn.execute(
+            "SELECT * FROM drawings WHERE book_id = ? AND page_number = ? ORDER BY id ASC",
+            (book_id, page_number),
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+        for r in rows:
+            r["points"] = json.loads(r["points"])
+        return rows
+
+    def get_drawings(self, book_id):
+        cur = self.conn.execute(
+            "SELECT * FROM drawings WHERE book_id = ? ORDER BY page_number ASC, id ASC",
+            (book_id,),
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+        for r in rows:
+            r["points"] = json.loads(r["points"])
+        return rows
+
+    def delete_drawing(self, drawing_id):
+        self.conn.execute("DELETE FROM drawings WHERE id = ?", (drawing_id,))
+        self.conn.commit()
+
+    def update_drawing(self, drawing_id, color, opacity, stroke_width):
+        """Edits a saved drawing's appearance -- color, opacity, and
+        stroke/outline width. Its shape and position aren't editable this
+        way (that would need interactive resize handles on the page
+        itself, not a simple form); deleting and redrawing covers that
+        case for now."""
+        self.conn.execute(
+            "UPDATE drawings SET color = ?, opacity = ?, stroke_width = ? WHERE id = ?",
+            (color, opacity, stroke_width, drawing_id),
+        )
         self.conn.commit()
 
     # ---------------- Settings ----------------

@@ -41,6 +41,7 @@ CATALOG = {
     "reader.toggle_focus_mode": ("Toggle Focus Mode (Hide All Menus)", "F11", "reader"),
     "reader.next_highlight": ("Jump to Next Highlight", "Ctrl+]", "reader"),
     "reader.prev_highlight": ("Jump to Previous Highlight", "Ctrl+[", "reader"),
+    "reader.undo_drawing": ("Undo Last Drawing Stroke", "Ctrl+Z", "reader"),
 }
 
 

@@ -13,12 +13,14 @@ from PySide6.QtGui import (
     QImage,
     QKeySequence,
     QPainter,
+    QPainterPath,
     QPen,
     QPixmap,
     QShortcut,
 )
 from PySide6.QtWidgets import (
     QApplication,
+    QButtonGroup,
     QColorDialog,
     QComboBox,
     QDialog,
@@ -36,6 +38,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QSlider,
     QSpinBox,
     QTextBrowser,
     QToolBar,
@@ -65,6 +68,8 @@ MAX_ZOOM = 6.0
 VIEWPORT_MARGIN = 24  # px of breathing room so a fitted page never touches the edges
 PAGE_GAP = 12  # px between the two pages in Two-Page View
 DEFAULT_HIGHLIGHT_COLOR = "#3878FF"
+DEFAULT_DRAWING_COLOR = "#FFD400"
+DRAWING_TOOLS = ("pen", "rectangle", "ellipse", "triangle", "line")
 FAR_POINT = (10 ** 9, 10 ** 9)     # a page-space point past any real content -- see char_index_at_point
 NEAR_POINT = (-10 ** 9, -10 ** 9)  # ditto, before any real content
 
@@ -308,6 +313,211 @@ class TextSelectionOverlay(QWidget):
                 painter.drawLine(r.left(), y, r.right(), y)
 
 
+class DrawingOverlay(QWidget):
+    """A transparent overlay sitting on top of the rendered page pixmap,
+    a sibling of TextSelectionOverlay (see its docstring for why
+    mouse-transparency, not an internal mode flag, is what routes clicks
+    to the right handler) -- same idea here: only non-transparent (and
+    thus only receiving mouse events) while Draw mode is on, but always
+    visible and always painting whatever's been saved, so drawings stay
+    on the page regardless of which mode is currently active, the same
+    way saved highlights do.
+
+    Drawing works as a draft, not an immediate save -- the same
+    "select/draw first, explicitly save second" shape as text
+    highlighting (drag to select text, then click Save Highlight): a
+    finished stroke or shape lands in _draft, not the database, so it
+    can be undone (Ctrl+Z / the Undo button) or discarded entirely (the
+    Clear button, or just leaving Draw mode or the page without saving)
+    before it ever becomes permanent. Only ReaderWindow.save_drawn_
+    highlights() actually writes anything to the database. Freehand pen
+    strokes record every point the mouse passes through; the shape tools
+    (rectangle/ellipse/triangle/line) only need the drag start and
+    current position -- a "corner to corner" box, the same interaction
+    for all four, with the specific shape rendered differently within
+    that box."""
+
+    def __init__(self, reader, parent=None):
+        super().__init__(parent)
+        self.reader = reader
+        self.setCursor(Qt.CrossCursor)
+        self._drawing = False
+        self._live_points = []
+        self._saved = []  # [{"id", "tool", "color": QColor, "opacity", "stroke_width", "points": [QPointF,...]}]
+        self._draft = []  # same shape as _saved, minus "id" -- finished but not yet persisted to the database
+        self.hide()
+
+    def mousePressEvent(self, event):
+        if event.button() != Qt.LeftButton:
+            return
+        self._drawing = True
+        self._live_points = [event.position()]
+        self.update()
+
+    def mouseMoveEvent(self, event):
+        if not self._drawing:
+            return
+        pos = event.position()
+        if self.reader.draw_tool == "pen":
+            self._live_points.append(pos)
+        else:
+            self._live_points = [self._live_points[0], pos]
+        self.update()
+
+    def mouseReleaseEvent(self, event):
+        if not self._drawing or event.button() != Qt.LeftButton:
+            return
+        self._drawing = False
+        pos = event.position()
+        if self.reader.draw_tool == "pen":
+            self._live_points.append(pos)
+        else:
+            self._live_points = [self._live_points[0], pos]
+        points = self._live_points
+        self._live_points = []
+        self.update()
+        # a click with no real drag (a stray click while switching tools,
+        # or a shape with a zero-size box) isn't a real shape -- require
+        # actual movement before it's worth keeping
+        if len(points) >= 2 and (points[0] - points[-1]).manhattanLength() >= 3:
+            # captured with THIS stroke's own color/opacity/width, not
+            # read again later at save time -- so changing the color
+            # partway through a drawing session doesn't retroactively
+            # repaint strokes already finished, the same way a real
+            # drawing tool's already-drawn strokes don't change color
+            # when you pick a new one for the next stroke
+            self._draft.append({
+                "tool": self.reader.draw_tool,
+                "points": points,
+                "color": QColor(self.reader.draw_color),
+                "opacity": self.reader.draw_opacity,
+                "stroke_width": self.reader.draw_stroke_width,
+            })
+            self.reader.notify_draft_drawing_added()
+
+    def contextMenuEvent(self, event):
+        pos = event.position()
+        hit = self.drawing_at_point(pos)
+        if hit is None:
+            return
+        menu = QMenu(self)
+        delete_action = menu.addAction("Delete Drawing")
+        chosen = menu.exec(event.globalPos())
+        if chosen is delete_action:
+            self.reader.delete_drawing(hit["id"])
+
+    def drawing_at_point(self, pos, tolerance=6):
+        """The saved drawing (as passed to set_saved_drawings) that `pos`
+        falls on or near, or None -- checked last-drawn-first, so an
+        overlapping shape's most-recently-added (visually topmost) match
+        wins, matching how the paintEvent below layers them."""
+        for d in reversed(self._saved):
+            if self._point_hits(pos, d, tolerance):
+                return d
+        return None
+
+    @staticmethod
+    def _point_hits(pos, drawing, tolerance):
+        tool, points = drawing["tool"], drawing["points"]
+        if tool == "pen":
+            for a, b in zip(points, points[1:]):
+                if DrawingOverlay._distance_to_segment(pos, a, b) <= tolerance:
+                    return True
+            return False
+        if tool == "line":
+            return DrawingOverlay._distance_to_segment(pos, points[0], points[-1]) <= tolerance
+        rect = QRectF(points[0], points[-1]).normalized()
+        margin = QPointF(tolerance, tolerance)
+        return QRectF(rect.topLeft() - margin, rect.bottomRight() + margin).contains(pos)
+
+    @staticmethod
+    def _distance_to_segment(p, a, b):
+        seg = b - a
+        length_sq = seg.x() ** 2 + seg.y() ** 2
+        if length_sq <= 1e-9:
+            return (p - a).manhattanLength()
+        t = max(0.0, min(1.0, QPointF.dotProduct(p - a, seg) / length_sq))
+        proj = a + seg * t
+        d = p - proj
+        return (d.x() ** 2 + d.y() ** 2) ** 0.5
+
+    def set_saved_drawings(self, drawings):
+        """drawings: a list of {"id", "tool", "color": QColor, "opacity",
+        "stroke_width", "points": [QPointF, ...]} -- already converted to
+        this overlay's own pixel space by the caller, same convention as
+        TextSelectionOverlay.set_saved_highlights."""
+        self._saved = drawings
+        self.update()
+
+    def clear_live_stroke(self):
+        self._drawing = False
+        self._live_points = []
+        self.update()
+
+    def get_draft_drawings(self):
+        return list(self._draft)
+
+    def has_draft(self):
+        return bool(self._draft)
+
+    def undo_last_draft(self):
+        if self._draft:
+            self._draft.pop()
+            self.update()
+
+    def clear_draft(self):
+        if self._draft:
+            self._draft = []
+            self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        for d in self._saved:
+            self._paint_shape(painter, d["tool"], d["points"], d["color"], d["opacity"], d["stroke_width"])
+        for d in self._draft:
+            self._paint_shape(painter, d["tool"], d["points"], d["color"], d["opacity"], d["stroke_width"])
+        if self._live_points:
+            self._paint_shape(
+                painter, self.reader.draw_tool, self._live_points,
+                self.reader.draw_color, self.reader.draw_opacity, self.reader.draw_stroke_width,
+            )
+        painter.end()
+
+    @staticmethod
+    def _paint_shape(painter, tool, points, color, opacity, stroke_width):
+        if len(points) < 2:
+            return
+        c = QColor(color)
+        c.setAlphaF(max(0.0, min(1.0, opacity)))
+        if tool == "pen":
+            painter.setPen(QPen(c, stroke_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            painter.setBrush(Qt.NoBrush)
+            path = QPainterPath()
+            path.moveTo(points[0])
+            for p in points[1:]:
+                path.lineTo(p)
+            painter.drawPath(path)
+        elif tool == "line":
+            painter.setPen(QPen(c, stroke_width, Qt.SolidLine, Qt.RoundCap))
+            painter.drawLine(points[0], points[-1])
+        else:
+            rect = QRectF(points[0], points[-1]).normalized()
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(c)
+            if tool == "rectangle":
+                painter.drawRect(rect)
+            elif tool == "ellipse":
+                painter.drawEllipse(rect)
+            elif tool == "triangle":
+                path = QPainterPath()
+                path.moveTo(rect.center().x(), rect.top())
+                path.lineTo(rect.left(), rect.bottom())
+                path.lineTo(rect.right(), rect.bottom())
+                path.closeSubpath()
+                painter.drawPath(path)
+
+
 class SelectionPopup(QWidget):
     """A small floating toolbar that appears next to a just-finished text
     selection -- offering Copy and Search in Book right there, instead of
@@ -480,6 +690,79 @@ class HighlightDialog(QDialog):
         return self.name_edit.text().strip(), self._color, self._accent_color, self.style_combo.currentData()
 
 
+class DrawingDialog(QDialog):
+    """Edits a saved drawing's color, opacity, and stroke/outline width --
+    the same appearance properties chosen up front in the draw toolbar
+    before drawing it, now editable afterward too. Its shape and position
+    aren't editable this way; that would need interactive resize handles
+    on the page itself rather than a simple form, so for now correcting
+    those means deleting the drawing and redrawing it."""
+
+    def __init__(self, title, initial_color, initial_opacity, initial_stroke_width, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self._color = QColor(initial_color)
+
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+
+        color_row = QHBoxLayout()
+        self.color_swatch = QLabel()
+        self.color_swatch.setFixedSize(22, 22)
+        self._update_swatch()
+        color_row.addWidget(self.color_swatch)
+        choose_btn = QPushButton("Choose Color...")
+        choose_btn.clicked.connect(self._choose_color)
+        color_row.addWidget(choose_btn)
+        color_row.addStretch()
+        form.addRow("Color", color_row)
+
+        opacity_row = QHBoxLayout()
+        self.opacity_slider = QSlider(Qt.Horizontal)
+        self.opacity_slider.setRange(5, 100)
+        self.opacity_slider.setValue(round(initial_opacity * 100))
+        self.opacity_label = QLabel(f"{self.opacity_slider.value()}%")
+        self.opacity_label.setFixedWidth(36)
+        self.opacity_slider.valueChanged.connect(lambda v: self.opacity_label.setText(f"{v}%"))
+        opacity_row.addWidget(self.opacity_slider)
+        opacity_row.addWidget(self.opacity_label)
+        form.addRow("Opacity", opacity_row)
+
+        self.width_spin = QSpinBox()
+        self.width_spin.setRange(1, 20)
+        self.width_spin.setValue(round(initial_stroke_width))
+        form.addRow("Width", self.width_spin)
+
+        layout.addLayout(form)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        btn_row.addWidget(cancel_btn)
+        save_btn = QPushButton("Save")
+        save_btn.setDefault(True)
+        save_btn.clicked.connect(self.accept)
+        btn_row.addWidget(save_btn)
+        layout.addLayout(btn_row)
+
+    def _update_swatch(self):
+        self.color_swatch.setStyleSheet(
+            f"background-color: {self._color.name()}; border: 1px solid palette(mid);"
+        )
+
+    def _choose_color(self):
+        color = QColorDialog.getColor(self._color, self, "Choose Drawing Color")
+        if color.isValid():
+            self._color = color
+            self._update_swatch()
+
+    def result_values(self):
+        """(color, opacity, stroke_width) -- call only after exec()
+        returns QDialog.Accepted."""
+        return self._color, self.opacity_slider.value() / 100.0, float(self.width_spin.value())
+
+
 class ReaderWindow(QMainWindow):
     def __init__(self, db: Database, book_id: int, on_close=None, password=None, open_book_at_page=None):
         super().__init__()
@@ -550,6 +833,16 @@ class ReaderWindow(QMainWindow):
         # explicit "Highlight Color" default-setting button.
         self.last_highlight_color = db.get_setting("last_highlight_color", self.highlight_color)
         self.last_highlight_accent_color = db.get_setting("last_highlight_accent_color", self.last_highlight_color)
+
+        self.draw_mode = False
+        self.draw_tool = db.get_setting("last_draw_tool", "pen")
+        if self.draw_tool not in DRAWING_TOOLS:
+            self.draw_tool = "pen"
+        self.draw_color = db.get_setting("last_draw_color", DEFAULT_DRAWING_COLOR)
+        self.draw_opacity = float(db.get_setting("last_draw_opacity", 0.4))
+        self.draw_stroke_width = float(db.get_setting("last_draw_stroke_width", 3.0))
+        self._draft_drawing_page = None  # which page (if any) has unsaved drawn strokes right now
+
         self._focus_mode = False
         self._pre_focus_bookmarks_visible = True
         self._pre_focus_thumbnails_visible = False
@@ -756,6 +1049,15 @@ class ReaderWindow(QMainWindow):
         self.thumbnails_btn.clicked.connect(self.toggle_thumbnail_dock)
         toolbar.addWidget(self.thumbnails_btn)
 
+        self.draw_btn = QPushButton("Draw")
+        self.draw_btn.setToolTip(
+            "Draw freehand or with simple shapes -- a manual way to mark up a "
+            "page, like highlighting or annotating a normal textbook"
+        )
+        self.draw_btn.setCheckable(True)
+        self.draw_btn.clicked.connect(self.toggle_draw_mode)
+        toolbar.addWidget(self.draw_btn)
+
         # Central viewing area holds both the page-image view and the plain
         # text view; only one is visible at a time depending on the mode.
         container = QWidget()
@@ -775,12 +1077,15 @@ class ReaderWindow(QMainWindow):
         self.text_overlay.set_live_color(live_color)
         self.selection_popup = SelectionPopup(self, self)
 
+        self.drawing_overlay = DrawingOverlay(self, self.page_label)
+
         self.text_browser = QTextBrowser()
         self.text_browser.setReadOnly(True)
 
         v.addWidget(self.scroll_area)
         v.addWidget(self.text_browser)
         self.setCentralWidget(container)
+        self._build_draw_toolbar()
         self._update_mode_visibility()
 
         # Ctrl+scroll to zoom, plain scroll to turn pages (see eventFilter / _handle_wheel).
@@ -799,6 +1104,8 @@ class ReaderWindow(QMainWindow):
         self.toggle_two_page_shortcut.activated.connect(self.two_page_btn.click)
         self.close_window_shortcut = QShortcut(QKeySequence(), self)
         self.close_window_shortcut.activated.connect(self.close)
+        self.undo_drawing_shortcut = QShortcut(QKeySequence(), self)
+        self.undo_drawing_shortcut.activated.connect(self._undo_drawing_shortcut_triggered)
 
         self.apply_shortcuts()
 
@@ -822,6 +1129,7 @@ class ReaderWindow(QMainWindow):
             (self.toggle_focus_mode_action, "reader.toggle_focus_mode"),
             (self.next_highlight_action, "reader.next_highlight"),
             (self.prev_highlight_action, "reader.prev_highlight"),
+            (self.undo_drawing_shortcut, "reader.undo_drawing"),
         )
         for target, action_id in bindings:
             seq = QKeySequence(effective_shortcut(action_id, overrides))
@@ -1104,6 +1412,21 @@ class ReaderWindow(QMainWindow):
             # so panning keeps working exactly as before.
             self.text_overlay.show()
             self.text_overlay.setAttribute(Qt.WA_TransparentForMouseEvents, not self.select_text_mode)
+        # Draw mode is exactly the same story as Select Text mode above --
+        # meaningless in Simple Text mode, since there's no rendered page
+        # image to draw on top of there, only plain extracted text.
+        if self.simple_text_mode:
+            self.drawing_overlay.hide()
+        else:
+            self.drawing_overlay.show()
+            self.drawing_overlay.setAttribute(Qt.WA_TransparentForMouseEvents, not self.draw_mode)
+        self.draw_btn.setEnabled(not self.simple_text_mode)
+        self.draw_btn.setToolTip(
+            "Not available in Simple Text mode"
+            if self.simple_text_mode else
+            "Draw freehand or with simple shapes -- a manual way to mark up a "
+            "page, like highlighting or annotating a normal textbook"
+        )
         # Two-Page View is a rendered-image concept, so it doesn't apply to
         # Simple Text mode's plain extracted text either.
         self.two_page_btn.setEnabled(not self.simple_text_mode)
@@ -1150,6 +1473,15 @@ class ReaderWindow(QMainWindow):
     def render_page(self):
         if self.doc is None:
             return
+        if self._draft_drawing_page is not None and self._draft_drawing_page != self.current_page:
+            # Only a genuine page change (not a resize, zoom change, or
+            # dark-mode toggle -- all of which also call render_page())
+            # should discard an in-progress, not-yet-saved drawing.
+            # current_page only changes for real navigation, so checking
+            # it here -- rather than hooking every individual navigation
+            # method -- catches every way of moving to a different page,
+            # present or future, in one place.
+            self.clear_draft_drawings()
         if self.simple_text_mode:
             page = self.doc[self.current_page]
             text = page.get_text("text").strip() or "(This page has no extractable text.)"
@@ -1227,6 +1559,7 @@ class ReaderWindow(QMainWindow):
         self.selection_popup.hide()
         self._pending_overlay_size = (width, height)
         self._load_saved_highlights_for_current_view()
+        self._load_saved_drawings_for_current_view()
         self._check_no_selectable_text()
         # Deferred: page_label is resized to fill the scroll area's viewport
         # (setWidgetResizable(True)) and centers the pixmap within itself
@@ -1247,6 +1580,8 @@ class ReaderWindow(QMainWindow):
         offset_y = max(0, (self.page_label.height() - height) // 2)
         self.text_overlay.setGeometry(offset_x, offset_y, width, height)
         self.text_overlay.raise_()
+        self.drawing_overlay.setGeometry(offset_x, offset_y, width, height)
+        self.drawing_overlay.raise_()  # always on top -- Draw mode should win over text selection visually too
 
     # ------------- Navigation -------------
     def keyPressEvent(self, event):
@@ -1398,6 +1733,10 @@ class ReaderWindow(QMainWindow):
     def toggle_select_text_mode(self, checked):
         self.select_text_btn.setChecked(checked)
         self.select_text_mode = checked
+        if checked and self.draw_mode:
+            # mutually exclusive with Draw mode -- see toggle_draw_mode
+            self.draw_btn.setChecked(False)
+            self.toggle_draw_mode(False)
         if not self.simple_text_mode:
             self.text_overlay.show()  # stays visible either way, to show saved highlights
             self.text_overlay.setAttribute(Qt.WA_TransparentForMouseEvents, not checked)
@@ -1575,6 +1914,249 @@ class ReaderWindow(QMainWindow):
                 })
         self.text_overlay.set_saved_highlights(overlay_highlights)
 
+    # ------------- Freehand / shape drawing -------------
+
+    def _build_draw_toolbar(self):
+        """A second toolbar row, hidden until Draw mode is turned on --
+        tool choice, color, opacity, and pen/stroke width. Kept as its
+        own toolbar rather than folded into the main one so it doesn't
+        take up permanent space for a mode most viewing sessions never
+        use."""
+        self.addToolBarBreak()
+        self.draw_toolbar = QToolBar("Drawing Tools", self)
+        self.draw_toolbar.setMovable(False)
+        self.addToolBar(self.draw_toolbar)
+
+        self._draw_tool_buttons = {}
+        tool_group = QButtonGroup(self)
+        tool_group.setExclusive(True)
+        tool_labels = [
+            ("pen", "Pen"), ("rectangle", "Box"), ("ellipse", "Circle"),
+            ("triangle", "Triangle"), ("line", "Line"),
+        ]
+        for tool_id, label in tool_labels:
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setChecked(tool_id == self.draw_tool)
+            btn.clicked.connect(lambda _checked, t=tool_id: self._set_draw_tool(t))
+            tool_group.addButton(btn)
+            self._draw_tool_buttons[tool_id] = btn
+            self.draw_toolbar.addWidget(btn)
+
+        self.draw_toolbar.addSeparator()
+
+        self.draw_toolbar.addWidget(QLabel(" Color: "))
+        self.draw_color_swatch = QLabel()
+        self.draw_color_swatch.setFixedSize(22, 22)
+        self.draw_color_swatch.setCursor(Qt.PointingHandCursor)
+        self.draw_color_swatch.setToolTip("Choose drawing color")
+        self._update_draw_color_swatch()
+        self.draw_color_swatch.mousePressEvent = lambda _event: self._choose_draw_color()
+        self.draw_toolbar.addWidget(self.draw_color_swatch)
+
+        self.draw_toolbar.addWidget(QLabel(" Opacity: "))
+        self.draw_opacity_slider = QSlider(Qt.Horizontal)
+        self.draw_opacity_slider.setRange(5, 100)
+        self.draw_opacity_slider.setValue(round(self.draw_opacity * 100))
+        self.draw_opacity_slider.setFixedWidth(100)
+        self.draw_opacity_slider.setToolTip("Drawing opacity")
+        self.draw_opacity_slider.valueChanged.connect(self._set_draw_opacity)
+        self.draw_toolbar.addWidget(self.draw_opacity_slider)
+        self.draw_opacity_label = QLabel(f"{self.draw_opacity_slider.value()}%")
+        self.draw_opacity_label.setFixedWidth(36)
+        self.draw_toolbar.addWidget(self.draw_opacity_label)
+
+        self.draw_toolbar.addWidget(QLabel(" Width: "))
+        self.draw_width_spin = QSpinBox()
+        self.draw_width_spin.setRange(1, 20)
+        self.draw_width_spin.setValue(round(self.draw_stroke_width))
+        self.draw_width_spin.setToolTip("Pen/outline width")
+        self.draw_width_spin.valueChanged.connect(self._set_draw_stroke_width)
+        self.draw_toolbar.addWidget(self.draw_width_spin)
+
+        self.draw_toolbar.addSeparator()
+
+        self.draw_undo_btn = QPushButton("\u21b6 Undo")
+        self.draw_undo_btn.setToolTip("Undo the last stroke or shape (Ctrl+Z)")
+        self.draw_undo_btn.setEnabled(False)
+        self.draw_undo_btn.clicked.connect(self.undo_last_drawing_stroke)
+        self.draw_toolbar.addWidget(self.draw_undo_btn)
+
+        self.draw_clear_btn = QPushButton("Clear")
+        self.draw_clear_btn.setToolTip("Discard everything drawn since the last save on this page")
+        self.draw_clear_btn.setEnabled(False)
+        self.draw_clear_btn.clicked.connect(self.clear_draft_drawings)
+        self.draw_toolbar.addWidget(self.draw_clear_btn)
+
+        self.draw_toolbar.addSeparator()
+
+        self.draw_save_btn = QPushButton("Save Drawn Highlight")
+        self.draw_save_btn.setToolTip(
+            "Save what you've drawn on this page permanently -- until then, it's "
+            "just a draft: leaving Draw mode or the page discards it"
+        )
+        self.draw_save_btn.setEnabled(False)
+        self.draw_save_btn.clicked.connect(self.save_drawn_highlights)
+        self.draw_toolbar.addWidget(self.draw_save_btn)
+
+        self.draw_toolbar.addSeparator()
+        hint = QLabel(" Right-click a saved drawing to delete it ")
+        hint.setEnabled(False)  # renders in the palette's disabled/dim text color, a subtle hint not a warning
+        self.draw_toolbar.addWidget(hint)
+
+        self.draw_toolbar.setVisible(False)
+
+    def _update_draw_color_swatch(self):
+        self.draw_color_swatch.setStyleSheet(
+            f"background-color: {self.draw_color}; border: 1px solid palette(mid);"
+        )
+
+    def _choose_draw_color(self):
+        color = QColorDialog.getColor(QColor(self.draw_color), self, "Choose Drawing Color")
+        if color.isValid():
+            self.draw_color = color.name()
+            self.db.set_setting("last_draw_color", self.draw_color)
+            self._update_draw_color_swatch()
+
+    def _set_draw_tool(self, tool_id):
+        self.draw_tool = tool_id
+        self.db.set_setting("last_draw_tool", tool_id)
+        self.drawing_overlay.clear_live_stroke()
+
+    def _set_draw_opacity(self, value):
+        self.draw_opacity = value / 100.0
+        self.db.set_setting("last_draw_opacity", self.draw_opacity)
+        self.draw_opacity_label.setText(f"{value}%")
+
+    def _set_draw_stroke_width(self, value):
+        self.draw_stroke_width = float(value)
+        self.db.set_setting("last_draw_stroke_width", self.draw_stroke_width)
+
+    def _update_draw_action_buttons(self):
+        has_draft = self.drawing_overlay.has_draft()
+        self.draw_undo_btn.setEnabled(has_draft)
+        self.draw_clear_btn.setEnabled(has_draft)
+        self.draw_save_btn.setEnabled(has_draft)
+
+    def notify_draft_drawing_added(self):
+        """Called by DrawingOverlay right after a finished stroke/shape
+        lands in its draft list -- the overlay owns the draft data itself
+        (see its docstring), but button enabled-state lives here on
+        ReaderWindow, so it needs telling when that data changes."""
+        self._draft_drawing_page = self.current_page
+        self._update_draw_action_buttons()
+
+    def undo_last_drawing_stroke(self):
+        self.drawing_overlay.undo_last_draft()
+        self._update_draw_action_buttons()
+
+    def _undo_drawing_shortcut_triggered(self):
+        # scoped to Draw mode explicitly, rather than relying only on
+        # undo_last_draft()'s own "nothing to undo" no-op -- Ctrl+Z
+        # should read as "undo my drawing", not fire (harmlessly, but
+        # confusingly) any time it's pressed regardless of context
+        if self.draw_mode:
+            self.undo_last_drawing_stroke()
+
+    def clear_draft_drawings(self):
+        self.drawing_overlay.clear_draft()
+        self._draft_drawing_page = None
+        self._update_draw_action_buttons()
+
+    def save_drawn_highlights(self):
+        """Persists every drawing currently in the draft (drawn since
+        the last save on this page, not yet in the database) -- the
+        drawing equivalent of clicking Save Highlight after selecting
+        text: nothing before this point was ever permanent."""
+        if self.doc is None:
+            return
+        draft = self.drawing_overlay.get_draft_drawings()
+        if not draft:
+            return
+        zoom = self._current_render_zoom or 1.0
+        for item in draft:
+            screen_points = item["points"]
+            page_idx, _first_pdf_point = self._page_and_point_at(screen_points[0])
+            x_offset = self._page_x_offset_px(page_idx)
+            pdf_points = [
+                [(p.x() - x_offset) / zoom, p.y() / zoom]
+                for p in screen_points
+            ]
+            self.db.add_drawing(
+                self.book_id, page_idx, item["tool"], item["color"].name(),
+                item["opacity"], item["stroke_width"], pdf_points,
+            )
+        self.drawing_overlay.clear_draft()
+        self._draft_drawing_page = None
+        self._load_saved_drawings_for_current_view()
+        self._update_draw_action_buttons()
+        self.refresh_highlights()
+
+    def toggle_draw_mode(self, checked):
+        self.draw_btn.setChecked(checked)
+        self.draw_mode = checked
+        self.draw_toolbar.setVisible(checked)
+        if checked and self.select_text_mode:
+            # mutually exclusive with Select Text mode -- both bind plain
+            # left-click-drag on the page to different things, so only
+            # one can own the mouse at a time
+            self.select_text_btn.setChecked(False)
+            self.toggle_select_text_mode(False)
+        if not self.simple_text_mode:
+            self.drawing_overlay.show()  # stays visible either way, to show saved drawings
+            self.drawing_overlay.setAttribute(Qt.WA_TransparentForMouseEvents, not checked)
+            self.drawing_overlay.raise_()
+        if not checked:
+            self.drawing_overlay.clear_live_stroke()
+            # anything drawn but not explicitly saved is gone the moment
+            # you leave Draw mode -- the same "never became permanent"
+            # fate as a text selection you never clicked Save Highlight on
+            self.clear_draft_drawings()
+        self._update_pan_cursor()
+
+    def delete_drawing(self, drawing_id):
+        self.db.delete_drawing(drawing_id)
+        self._load_saved_drawings_for_current_view()
+        self.refresh_highlights()
+
+    def edit_drawing(self, drawing_id):
+        drawing = next((d for d in self.db.get_drawings(self.book_id) if d["id"] == drawing_id), None)
+        if drawing is None:
+            return
+        dialog = DrawingDialog(
+            "Edit Drawing", drawing["color"], drawing["opacity"], drawing["stroke_width"], parent=self,
+        )
+        if dialog.exec() != QDialog.Accepted:
+            return
+        color, opacity, stroke_width = dialog.result_values()
+        self.db.update_drawing(drawing_id, color.name(), opacity, stroke_width)
+        self._load_saved_drawings_for_current_view()
+        self.refresh_highlights()
+
+    def _load_saved_drawings_for_current_view(self):
+        """Loads every saved drawing for whichever page(s) are currently
+        visible and hands them to the overlay in this render's pixel
+        space -- called on every render alongside
+        _load_saved_highlights_for_current_view, for the same reason."""
+        if self.doc is None:
+            return
+        zoom = self._current_render_zoom or 1.0
+
+        overlay_drawings = []
+        for page_idx in self._visible_page_indices():
+            x_offset = self._page_x_offset_px(page_idx)
+            for d in self.db.get_drawings_for_page(self.book_id, page_idx):
+                points = [
+                    QPointF(x * zoom + x_offset, y * zoom)
+                    for (x, y) in d["points"]
+                ]
+                overlay_drawings.append({
+                    "id": d["id"], "tool": d["tool"], "color": QColor(d["color"]),
+                    "opacity": d["opacity"], "stroke_width": d["stroke_width"] * zoom,
+                    "points": points,
+                })
+        self.drawing_overlay.set_saved_drawings(overlay_drawings)
+
     def _check_no_selectable_text(self):
         """While Select Text mode is on, if the current page (or both
         pages of a spread) has no extractable text at all -- most likely
@@ -1618,6 +2200,7 @@ class ReaderWindow(QMainWindow):
         self.text_overlay.set_highlight_rects([])
         self.selection_popup.hide()
         self._load_saved_highlights_for_current_view()
+        self._load_saved_drawings_for_current_view()
         self.refresh_highlights()
 
     def _remember_last_highlight_colors(self, color, accent_color):
@@ -1639,6 +2222,7 @@ class ReaderWindow(QMainWindow):
     def delete_highlight(self, highlight_id):
         self.db.delete_highlight(highlight_id)
         self._load_saved_highlights_for_current_view()
+        self._load_saved_drawings_for_current_view()
         self.refresh_highlights()
 
     def edit_highlight(self, highlight_id):
@@ -1660,6 +2244,7 @@ class ReaderWindow(QMainWindow):
         self.db.update_highlight_style(highlight_id, style)
         self._remember_last_highlight_colors(color, accent_color)
         self._load_saved_highlights_for_current_view()
+        self._load_saved_drawings_for_current_view()
         self.refresh_highlights()
 
     def choose_default_highlight_color(self):
@@ -1862,17 +2447,39 @@ class ReaderWindow(QMainWindow):
         self.db.delete_bookmark(item.data(Qt.UserRole))
         self.refresh_bookmarks()
 
+    def _get_all_annotations(self):
+        """Every highlight and drawing in this book, as a single
+        page-ordered list of dicts -- each tagged with "kind"
+        ("highlight" or "drawing") so callers can branch on how to
+        display/edit/delete an entry, without needing to care that the
+        two live in separate database tables under the hood. (They do,
+        deliberately: a drawn ellipse or triangle forced through a
+        highlight's rectangle-list storage would lose its actual shape,
+        rendering as a plain box instead -- see DrawingOverlay's
+        docstring. Keeping the tables separate costs nothing here, since
+        this is the one place that needs to treat them as one list, and
+        it's cheap to merge them on the way out.)"""
+        highlights = [dict(h, kind="highlight") for h in self.db.get_highlights(self.book_id)]
+        drawings = [dict(d, kind="drawing") for d in self.db.get_drawings(self.book_id)]
+        combined = highlights + drawings
+        combined.sort(key=lambda entry: (entry["page_number"], entry["id"]))
+        return combined
+
     def refresh_highlights(self):
         self.highlight_list.clear()
-        for h in self.db.get_highlights(self.book_id):
-            text = h["label"] or f"Page {h['page_number'] + 1}"
-            snippet = (h["text"] or "").strip().replace("\n", " ")
-            if snippet:
-                text += f" \u2014 {snippet[:40]}{'...' if len(snippet) > 40 else ''}"
+        for entry in self._get_all_annotations():
+            if entry["kind"] == "drawing":
+                text = f"Page {entry['page_number'] + 1} \u2014 {entry['tool'].capitalize()} drawing"
+            else:
+                text = entry["label"] or f"Page {entry['page_number'] + 1}"
+                snippet = (entry["text"] or "").strip().replace("\n", " ")
+                if snippet:
+                    text += f" \u2014 {snippet[:40]}{'...' if len(snippet) > 40 else ''}"
             item = QListWidgetItem(text)
-            item.setData(Qt.UserRole, h["id"])
-            item.setData(Qt.UserRole + 1, h["page_number"])
-            item.setForeground(QColor(h["color"]))
+            item.setData(Qt.UserRole, entry["id"])
+            item.setData(Qt.UserRole + 1, entry["page_number"])
+            item.setData(Qt.UserRole + 2, entry["kind"])
+            item.setForeground(QColor(entry["color"]))
             self.highlight_list.addItem(item)
 
     def jump_to_highlight(self, item):
@@ -1880,34 +2487,37 @@ class ReaderWindow(QMainWindow):
         self.render_page()
 
     def jump_to_next_highlight(self):
-        """Jumps to the first highlight on a page after the current one,
-        wrapping around to the very first highlight in the book if the
-        current page is at or past the last one that has any."""
-        highlights = self.db.get_highlights(self.book_id)  # already ordered by page, then id
-        if not highlights:
+        """Jumps to the first highlight or drawing on a page after the
+        current one, wrapping around to the very first one in the book
+        if the current page is at or past the last one that has any."""
+        entries = self._get_all_annotations()  # already ordered by page, then id
+        if not entries:
             return
-        for h in highlights:
-            if h["page_number"] > self.current_page:
-                self._jump_to_highlight_entry(h)
+        for entry in entries:
+            if entry["page_number"] > self.current_page:
+                self._jump_to_highlight_entry(entry)
                 return
-        self._jump_to_highlight_entry(highlights[0])
+        self._jump_to_highlight_entry(entries[0])
 
     def jump_to_prev_highlight(self):
-        """Same idea in reverse -- the last highlight on a page before the
-        current one, wrapping around to the very last highlight if
-        already at or before the first page that has any."""
-        highlights = self.db.get_highlights(self.book_id)
-        if not highlights:
+        """Same idea in reverse -- the last highlight or drawing on a
+        page before the current one, wrapping around to the very last
+        one if already at or before the first page that has any."""
+        entries = self._get_all_annotations()
+        if not entries:
             return
-        for h in reversed(highlights):
-            if h["page_number"] < self.current_page:
-                self._jump_to_highlight_entry(h)
+        for entry in reversed(entries):
+            if entry["page_number"] < self.current_page:
+                self._jump_to_highlight_entry(entry)
                 return
-        self._jump_to_highlight_entry(highlights[-1])
+        self._jump_to_highlight_entry(entries[-1])
 
-    def _jump_to_highlight_entry(self, highlight):
-        self.jump_to_page(highlight["page_number"] + 1)
-        label = highlight["label"] or f"Page {highlight['page_number'] + 1}"
+    def _jump_to_highlight_entry(self, entry):
+        self.jump_to_page(entry["page_number"] + 1)
+        if entry["kind"] == "drawing":
+            label = f"{entry['tool'].capitalize()} drawing"
+        else:
+            label = entry["label"] or f"Page {entry['page_number'] + 1}"
         self.copy_feedback_label.setText(f"Highlight: {label}")
         QTimer.singleShot(2500, lambda: self.copy_feedback_label.setText(""))
 
@@ -1915,26 +2525,29 @@ class ReaderWindow(QMainWindow):
         item = self.highlight_list.itemAt(pos)
         if item is None:
             return
-        highlight_id = item.data(Qt.UserRole)
+        entry_id = item.data(Qt.UserRole)
+        is_drawing = item.data(Qt.UserRole + 2) == "drawing"
         menu = QMenu(self)
         jump_action = menu.addAction("Jump to Page")
-        edit_action = menu.addAction("Edit Highlight...")
-        delete_action = menu.addAction("Delete Highlight")
+        edit_action = menu.addAction("Edit Drawing..." if is_drawing else "Edit Highlight...")
+        delete_action = menu.addAction("Delete Drawing" if is_drawing else "Delete Highlight")
         chosen = menu.exec(self.highlight_list.mapToGlobal(pos))
         if chosen is jump_action:
             self.jump_to_highlight(item)
         elif chosen is edit_action:
-            self.edit_highlight(highlight_id)
+            self.edit_drawing(entry_id) if is_drawing else self.edit_highlight(entry_id)
         elif chosen is delete_action:
-            self.delete_highlight(highlight_id)
+            self.delete_drawing(entry_id) if is_drawing else self.delete_highlight(entry_id)
 
     def remove_selected_highlight(self):
         item = self.highlight_list.currentItem()
         if not item:
             return
-        self.db.delete_highlight(item.data(Qt.UserRole))
-        self.refresh_highlights()
-        self._load_saved_highlights_for_current_view()
+        entry_id = item.data(Qt.UserRole)
+        if item.data(Qt.UserRole + 2) == "drawing":
+            self.delete_drawing(entry_id)
+        else:
+            self.delete_highlight(entry_id)
 
     def export_highlights_notes(self):
         highlights = self.db.get_highlights(self.book_id)
