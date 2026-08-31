@@ -64,10 +64,14 @@ WHEEL_ACTION_PAGE_TURN = "Turn Page While Zoomed"
 WHEEL_ACTIONS = (WHEEL_ACTION_NONE, WHEEL_ACTION_ZOOM, WHEEL_ACTION_PAGE_TURN)
 
 # gesture_id -> human label, shown as a row in the settings dialog.
+# Shift+Scroll and Alt+Scroll are deliberately not offered here: both
+# already carry OS/desktop-environment-level meaning on most systems
+# (Alt+Scroll commonly changes the scroll axis to horizontal, for
+# instance), so claiming them for something else here would fight with
+# behavior the user already has outside this app entirely, not just
+# inside it.
 WHEEL_GESTURES = {
     "ctrl_scroll": "Ctrl + Scroll",
-    "shift_scroll": "Shift + Scroll",
-    "alt_scroll": "Alt + Scroll",
     "middle_click_scroll": "Middle-Click (hold) + Scroll",
     "right_click_scroll": "Right-Click (hold) + Scroll",
 }
@@ -75,8 +79,6 @@ WHEEL_GESTURES = {
 # gesture_id -> its default action, one of WHEEL_ACTIONS.
 WHEEL_GESTURE_DEFAULTS = {
     "ctrl_scroll": WHEEL_ACTION_ZOOM,
-    "shift_scroll": WHEEL_ACTION_NONE,
-    "alt_scroll": WHEEL_ACTION_NONE,
     "middle_click_scroll": WHEEL_ACTION_PAGE_TURN,
     "right_click_scroll": WHEEL_ACTION_ZOOM,
 }

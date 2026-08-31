@@ -414,26 +414,28 @@ than the bare `=`/`-` keys they default to.
 
 ## Mouse wheel gestures
 
-Five gestures — Ctrl / Shift / Alt held while scrolling, or Middle-Click
-/ Right-Click held while scrolling — are each independently configurable
-to one of three actions: **Zoom In/Out**, **Turn Page While Zoomed**, or
-**None**. By default:
+Three gestures — Ctrl held while scrolling, or Middle-Click / Right-Click
+held while scrolling — are each independently configurable to one of
+three actions: **Zoom In/Out**, **Turn Page While Zoomed**, or **None**.
+(Shift+Scroll and Alt+Scroll are deliberately not offered here, since
+both already carry OS-level meaning on most systems — Alt+Scroll commonly
+changes the scroll axis to horizontal, for instance — and claiming them
+for something else here would fight with behavior you already have
+outside this app.) By default:
 
 | Gesture                        | Action               |
 |---------------------------------|----------------------|
 | Ctrl + Scroll                   | Zoom In/Out          |
 | Right-Click (hold) + Scroll     | Zoom In/Out          |
 | Middle-Click (hold) + Scroll    | Turn Page While Zoomed |
-| Shift + Scroll                  | None                 |
-| Alt + Scroll                    | None                 |
 
 Unlike the keyboard shortcuts above, more than one gesture can point at
 the same action at once on purpose — Ctrl+Scroll and Right-Click+Scroll
 both zoom simultaneously by default, so use whichever's more natural in
-the moment, or reassign either (or add a third) in the **Mouse Wheel
-Gestures** section of the Keyboard Shortcuts dialog. That section has no
-conflict warning, because two gestures sharing an action isn't a
-conflict here the way two keyboard shortcuts sharing a key would be.
+the moment, or reassign either in the **Mouse Wheel Gestures** section
+of the Keyboard Shortcuts dialog. That section has no conflict warning,
+because two gestures sharing an action isn't a conflict here the way two
+keyboard shortcuts sharing a key would be.
 
 Right-click held through a scroll — using it for the zoom gesture above,
 if that's how it's configured — never also opens the right-click menu

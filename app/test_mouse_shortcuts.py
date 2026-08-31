@@ -9,8 +9,10 @@
    but more than one wheel gesture legitimately pointing at the same
    action is the whole point here, not an edge case to resolve away.
 
-2. All five wheel gestures (Ctrl/Shift/Alt+Scroll, Middle/Right-Click
-   held+Scroll) are independently configurable to any of three actions
+2. All three wheel gestures (Ctrl+Scroll, Middle/Right-Click held +
+   Scroll -- Shift+Scroll and Alt+Scroll are deliberately not offered,
+   since both already carry OS-level meaning on most systems) are
+   independently configurable to any of three actions
    (None / Zoom In/Out / Turn Page While Zoomed) via the Keyboard
    Shortcuts dialog's new "Mouse Wheel Gestures" section.
 
@@ -98,11 +100,18 @@ class TestWheelGestureDefaults(unittest.TestCase):
     def test_middle_click_defaults_to_page_turn(self):
         self.assertEqual(effective_wheel_action("middle_click_scroll", {}), WHEEL_ACTION_PAGE_TURN)
 
-    def test_shift_and_alt_default_to_none(self):
-        self.assertEqual(effective_wheel_action("shift_scroll", {}), WHEEL_ACTION_NONE)
-        self.assertEqual(effective_wheel_action("alt_scroll", {}), WHEEL_ACTION_NONE)
+    def test_shift_and_alt_scroll_are_not_offered_as_gestures(self):
+        """Both already carry OS-level meaning on most systems (Alt+Scroll
+        commonly changes the scroll axis, for instance) -- claiming them
+        for something else here would fight with behavior the user
+        already has outside this app entirely."""
+        self.assertNotIn("shift_scroll", WHEEL_GESTURES)
+        self.assertNotIn("alt_scroll", WHEEL_GESTURES)
 
-    def test_all_five_gestures_have_defaults(self):
+    def test_exactly_three_gestures_are_offered(self):
+        self.assertEqual(set(WHEEL_GESTURES), {"ctrl_scroll", "middle_click_scroll", "right_click_scroll"})
+
+    def test_all_gestures_have_defaults(self):
         for gesture_id in WHEEL_GESTURES:
             self.assertIn(gesture_id, WHEEL_GESTURE_DEFAULTS)
 
@@ -120,19 +129,28 @@ class TestWheelOverridesPersistence(unittest.TestCase):
             os.remove(self.tmp_db)
 
     def test_save_and_reload_round_trips(self):
-        save_wheel_overrides(self.db, {"shift_scroll": WHEEL_ACTION_ZOOM})
+        save_wheel_overrides(self.db, {"middle_click_scroll": WHEEL_ACTION_ZOOM})
         reloaded = load_wheel_overrides(self.db)
-        self.assertEqual(reloaded.get("shift_scroll"), WHEEL_ACTION_ZOOM)
+        self.assertEqual(reloaded.get("middle_click_scroll"), WHEEL_ACTION_ZOOM)
 
     def test_unknown_gesture_id_is_not_persisted(self):
         save_wheel_overrides(self.db, {"not_a_real_gesture": WHEEL_ACTION_ZOOM})
         reloaded = load_wheel_overrides(self.db)
         self.assertNotIn("not_a_real_gesture", reloaded)
 
-    def test_invalid_action_value_is_not_persisted(self):
-        save_wheel_overrides(self.db, {"shift_scroll": "Not A Real Action"})
+    def test_shift_and_alt_gesture_ids_are_not_persisted(self):
+        """Even if a stale value from before this change is still sitting
+        in the settings JSON (or someone hand-edits it), a removed
+        gesture_id must not resurrect itself."""
+        save_wheel_overrides(self.db, {"shift_scroll": WHEEL_ACTION_ZOOM, "alt_scroll": WHEEL_ACTION_ZOOM})
         reloaded = load_wheel_overrides(self.db)
         self.assertNotIn("shift_scroll", reloaded)
+        self.assertNotIn("alt_scroll", reloaded)
+
+    def test_invalid_action_value_is_not_persisted(self):
+        save_wheel_overrides(self.db, {"middle_click_scroll": "Not A Real Action"})
+        reloaded = load_wheel_overrides(self.db)
+        self.assertNotIn("middle_click_scroll", reloaded)
 
     def test_missing_settings_value_yields_empty_overrides(self):
         self.assertEqual(load_wheel_overrides(self.db), {})
@@ -207,20 +225,19 @@ class TestWheelGestureReconfiguration(ReaderTestCase):
         self.win._handle_wheel(_wheel_event(120, buttons=Qt.RightButton))
         self.assertGreater(self.win.zoom, 1.0)
 
-    def test_shift_scroll_can_be_assigned_to_page_turn(self):
-        save_wheel_overrides(self.db, {"shift_scroll": WHEEL_ACTION_PAGE_TURN})
+    def test_middle_click_scroll_can_be_reassigned_to_zoom(self):
+        save_wheel_overrides(self.db, {"middle_click_scroll": WHEEL_ACTION_ZOOM})
         self.win.apply_shortcuts()
         self.win.auto_fit = False
-        self.win.zoom = 2.0
-        self.win.current_page = 0
-        self.win._handle_wheel(_wheel_event(-120, modifiers=Qt.ShiftModifier))
-        self.assertEqual(self.win.current_page, 1)
+        self.win.zoom = 1.0
+        self.win._handle_wheel(_wheel_event(120, buttons=Qt.MiddleButton))
+        self.assertGreater(self.win.zoom, 1.0)
 
     def test_apply_shortcuts_refreshes_the_cached_gesture_actions(self):
-        self.assertEqual(self.win.wheel_gesture_actions["shift_scroll"], WHEEL_ACTION_NONE)
-        save_wheel_overrides(self.db, {"shift_scroll": WHEEL_ACTION_ZOOM})
+        self.assertEqual(self.win.wheel_gesture_actions["middle_click_scroll"], WHEEL_ACTION_PAGE_TURN)
+        save_wheel_overrides(self.db, {"middle_click_scroll": WHEEL_ACTION_ZOOM})
         self.win.apply_shortcuts()
-        self.assertEqual(self.win.wheel_gesture_actions["shift_scroll"], WHEEL_ACTION_ZOOM)
+        self.assertEqual(self.win.wheel_gesture_actions["middle_click_scroll"], WHEEL_ACTION_ZOOM)
 
 
 class TestReadingContextMenu(ReaderTestCase):
@@ -343,10 +360,15 @@ class TestShortcutsDialogWheelSection(unittest.TestCase):
         if os.path.exists(self.tmp_db):
             os.remove(self.tmp_db)
 
-    def test_all_five_gestures_appear_as_rows(self):
+    def test_all_gestures_appear_as_rows(self):
         dlg = ShortcutsDialog(self.db)
         for gesture_id in WHEEL_GESTURES:
             self.assertIn(gesture_id, dlg._wheel_edits)
+
+    def test_shift_and_alt_scroll_do_not_appear_as_rows(self):
+        dlg = ShortcutsDialog(self.db)
+        self.assertNotIn("shift_scroll", dlg._wheel_edits)
+        self.assertNotIn("alt_scroll", dlg._wheel_edits)
 
     def test_rows_default_to_the_correct_action(self):
         dlg = ShortcutsDialog(self.db)
@@ -356,14 +378,14 @@ class TestShortcutsDialogWheelSection(unittest.TestCase):
 
     def test_changing_a_dropdown_updates_result_wheel_overrides(self):
         dlg = ShortcutsDialog(self.db)
-        dlg._wheel_edits["shift_scroll"].setCurrentText(WHEEL_ACTION_ZOOM)
-        self.assertEqual(dlg.result_wheel_overrides().get("shift_scroll"), WHEEL_ACTION_ZOOM)
+        dlg._wheel_edits["middle_click_scroll"].setCurrentText(WHEEL_ACTION_NONE)
+        self.assertEqual(dlg.result_wheel_overrides().get("middle_click_scroll"), WHEEL_ACTION_NONE)
 
     def test_two_gestures_sharing_an_action_is_not_flagged_as_a_conflict(self):
         """The keyboard-shortcut conflict warning must never fire because
         of wheel gestures -- they're not even in the same catalog."""
         dlg = ShortcutsDialog(self.db)
-        dlg._wheel_edits["shift_scroll"].setCurrentText(WHEEL_ACTION_ZOOM)  # now shares Zoom with ctrl_scroll and right_click_scroll
+        dlg._wheel_edits["middle_click_scroll"].setCurrentText(WHEEL_ACTION_ZOOM)  # now shares Zoom with ctrl_scroll and right_click_scroll
         self.assertTrue(dlg._save_btn.isEnabled())
         self.assertEqual(dlg._conflict_label.text(), "")
 
@@ -376,18 +398,18 @@ class TestShortcutsDialogWheelSection(unittest.TestCase):
     def test_reset_all_restores_wheel_gestures_too(self):
         dlg = ShortcutsDialog(self.db)
         dlg._wheel_edits["ctrl_scroll"].setCurrentText(WHEEL_ACTION_NONE)
-        dlg._wheel_edits["shift_scroll"].setCurrentText(WHEEL_ACTION_ZOOM)
+        dlg._wheel_edits["middle_click_scroll"].setCurrentText(WHEEL_ACTION_ZOOM)
         dlg._reset_all()
         self.assertEqual(dlg._wheel_edits["ctrl_scroll"].currentText(), WHEEL_ACTION_ZOOM)
-        self.assertEqual(dlg._wheel_edits["shift_scroll"].currentText(), WHEEL_ACTION_NONE)
+        self.assertEqual(dlg._wheel_edits["middle_click_scroll"].currentText(), WHEEL_ACTION_PAGE_TURN)
 
     def test_save_and_reload_through_the_dialog_round_trips(self):
         dlg = ShortcutsDialog(self.db)
-        dlg._wheel_edits["alt_scroll"].setCurrentText(WHEEL_ACTION_PAGE_TURN)
+        dlg._wheel_edits["middle_click_scroll"].setCurrentText(WHEEL_ACTION_NONE)
         save_wheel_overrides(self.db, dlg.result_wheel_overrides())
 
         dlg2 = ShortcutsDialog(self.db)
-        self.assertEqual(dlg2._wheel_edits["alt_scroll"].currentText(), WHEEL_ACTION_PAGE_TURN)
+        self.assertEqual(dlg2._wheel_edits["middle_click_scroll"].currentText(), WHEEL_ACTION_NONE)
 
 
 if __name__ == "__main__":

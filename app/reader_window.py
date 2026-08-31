@@ -1723,8 +1723,6 @@ class ReaderWindow(QMainWindow):
         intended behavior, not an edge case to resolve away."""
         held = {
             "ctrl_scroll": bool(modifiers & Qt.ControlModifier),
-            "shift_scroll": bool(modifiers & Qt.ShiftModifier),
-            "alt_scroll": bool(modifiers & Qt.AltModifier),
             "middle_click_scroll": bool(buttons & Qt.MiddleButton),
             "right_click_scroll": bool(buttons & Qt.RightButton),
         }

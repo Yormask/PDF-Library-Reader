@@ -3,8 +3,10 @@ action grouped by window, lets the user record a new key combination for
 any of them via QKeySequenceEdit, flags conflicts in real time, and only
 allows saving once none remain.
 
-A second, separate section further down lists the five mouse wheel
-gestures (Ctrl/Shift/Alt + Scroll, Middle/Right-Click held + Scroll),
+A second, separate section further down lists the three mouse wheel
+gestures (Ctrl+Scroll, Middle/Right-Click held + Scroll -- Shift+Scroll
+and Alt+Scroll are deliberately not offered, since both already carry
+OS-level meaning on most systems that this shouldn't compete with),
 each assignable to an action via a dropdown -- there's no keyboard-style
 "type a combo" way to capture a mouse gesture, and unlike the action->key
 shortcuts above, more than one gesture can legitimately point at the same
