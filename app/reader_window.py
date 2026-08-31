@@ -50,7 +50,10 @@ from PySide6.QtWidgets import (
 from .database import Database
 from .highlights_notes import build_highlights_notes
 from .search_dialog import TextSearchDialog
-from .shortcuts import effective_shortcut, load_overrides
+from .shortcuts import (
+    effective_shortcut, effective_wheel_action, load_overrides, load_wheel_overrides,
+    WHEEL_ACTION_PAGE_TURN, WHEEL_ACTION_ZOOM, WHEEL_GESTURES,
+)
 from .text_selection import (
     char_index_at_point,
     chars_from_rawdict,
@@ -812,6 +815,14 @@ class ReaderWindow(QMainWindow):
         self._pan_start_pos = None
         self._pan_start_h = 0
         self._pan_start_v = 0
+        # Set on a right-button press on the page, cleared on release --
+        # tracks whether the button was held through a scroll (the
+        # right-click-hold-and-scroll gesture, if that's how zoom or
+        # page-turn-while-zoomed is currently configured), so the reading
+        # context menu only appears for an actual simple right-click, not
+        # as an unwelcome interruption right after using the button for a
+        # scroll gesture instead.
+        self._right_click_held_through_scroll = False
 
         self._current_render_zoom = 1.0
 
@@ -1164,6 +1175,18 @@ class ReaderWindow(QMainWindow):
                 target.setKey(seq)
             else:
                 target.setShortcut(seq)
+
+        # The two mouse-wheel actions aren't QAction/QShortcut shortcuts at
+        # all (no QKeySequence can represent "hold the right mouse button"),
+        # so they're not part of the bindings tuple above -- just cached
+        # here as a plain {gesture_id: action} dict for _resolve_wheel_
+        # action to compare against on every wheel event, rather than
+        # re-reading and re-parsing settings on every single scroll tick.
+        wheel_overrides = load_wheel_overrides(self.db)
+        self.wheel_gesture_actions = {
+            gesture_id: effective_wheel_action(gesture_id, wheel_overrides)
+            for gesture_id in WHEEL_GESTURES
+        }
 
     def _build_bookmarks_dock(self):
         dock = QDockWidget("Bookmarks/Highlights", self)
@@ -1678,27 +1701,70 @@ class ReaderWindow(QMainWindow):
             return self._handle_wheel(event)
         if obj is self.page_label:
             if event.type() == QEvent.MouseButtonPress:
+                if event.button() == Qt.RightButton:
+                    return self._handle_reading_menu_press(event)
                 return self._handle_pan_press(event)
             if event.type() == QEvent.MouseMove:
                 return self._handle_pan_move(event)
             if event.type() == QEvent.MouseButtonRelease:
+                if event.button() == Qt.RightButton:
+                    return self._handle_reading_menu_release(event)
                 return self._handle_pan_release(event)
         return super().eventFilter(obj, event)
 
+    def _wheel_action_active(self, action, modifiers, buttons):
+        """True if any currently-held gesture (a modifier key or a held
+        mouse button) is configured -- see self.wheel_gesture_actions,
+        cached by apply_shortcuts -- to perform `action` for this wheel
+        event. Checking "is any gesture pointing at this action active"
+        rather than "which single gesture is active" is what lets more
+        than one gesture (by default, both Ctrl+Scroll and Right-Click
+        held+Scroll) trigger the same action simultaneously, which is the
+        intended behavior, not an edge case to resolve away."""
+        held = {
+            "ctrl_scroll": bool(modifiers & Qt.ControlModifier),
+            "shift_scroll": bool(modifiers & Qt.ShiftModifier),
+            "alt_scroll": bool(modifiers & Qt.AltModifier),
+            "middle_click_scroll": bool(buttons & Qt.MiddleButton),
+            "right_click_scroll": bool(buttons & Qt.RightButton),
+        }
+        return any(
+            is_held and self.wheel_gesture_actions.get(gesture_id) == action
+            for gesture_id, is_held in held.items()
+        )
+
     def _handle_wheel(self, event):
-        """Ctrl+scroll zooms (or resizes text). Plain scroll turns pages only
-        when the page is fit to the screen (nothing to accidentally scroll
-        past) or in Simple Text mode (scroll past the top/bottom edge). Once
-        you've zoomed in manually, plain scroll only pans the page -- holding
-        the middle mouse button while scrolling explicitly turns the page
-        instead, so you can't flip pages by accident while panning around a
-        zoomed-in page."""
+        """Zoom and page-turn-while-zoomed are both configurable gestures
+        (see WHEEL_GESTURES in the shortcuts module -- self.wheel_gesture_
+        actions, cached by apply_shortcuts, is the live {gesture_id:
+        action} mapping). By default, Ctrl+Scroll and Right-Click
+        held+Scroll both zoom, and Middle-Click held+Scroll turns the page
+        while zoomed in, but any of the five available gestures (Ctrl/
+        Shift/Alt modifier, or Middle/Right mouse button held) can be
+        reassigned to either action or turned off entirely. Plain scroll
+        (satisfying no gesture currently assigned to either action) turns
+        pages only when the page is fit to the screen (nothing to
+        accidentally scroll past) or in Simple Text mode (scroll past the
+        top/bottom edge); once zoomed in manually, plain scroll only pans,
+        and an active page-turn gesture is the explicit "turn the page
+        anyway" override."""
         if self.doc is None:
             return False
 
         modifiers = event.modifiers()
+        buttons = event.buttons()
+        if buttons & Qt.RightButton:
+            # Whatever else this wheel event does, the right button was
+            # just used for a scroll gesture, not a plain click -- the
+            # eventual release must not also pop open the reading context
+            # menu on top of it. Set unconditionally (not just when this
+            # scroll ends up triggering an action): the user scrolling at
+            # all while holding right-click reads as "this was a
+            # deliberate hold", regardless of what it's currently
+            # configured to do.
+            self._right_click_held_through_scroll = True
 
-        if modifiers & Qt.ControlModifier:
+        if self._wheel_action_active(WHEEL_ACTION_ZOOM, modifiers, buttons):
             delta = event.angleDelta().y()
             if delta > 0:
                 self.increase_text_size()
@@ -1734,9 +1800,9 @@ class ReaderWindow(QMainWindow):
             return True
 
         # Zoomed in manually: plain scroll only pans, never changes pages by
-        # accident. Holding the middle mouse button while scrolling is the
-        # explicit "turn the page anyway" gesture.
-        if event.buttons() & Qt.MiddleButton:
+        # accident. An active page-turn gesture is the explicit "turn the
+        # page anyway" override.
+        if self._wheel_action_active(WHEEL_ACTION_PAGE_TURN, modifiers, buttons):
             if delta_y > 0:
                 self.prev_page()
             else:
@@ -1744,6 +1810,35 @@ class ReaderWindow(QMainWindow):
             return True
 
         return False  # let the scroll area pan normally
+
+    # ------------- Right-click reading menu (page_label only -- Select
+    # Text mode and Draw mode's own overlays handle right-click themselves,
+    # for editing/deleting whatever was clicked on) -------------
+    def _handle_reading_menu_press(self, event):
+        self._right_click_held_through_scroll = False
+        return True  # consumed -- nothing else on this widget cares about a right-press
+
+    def _handle_reading_menu_release(self, event):
+        if not self._right_click_held_through_scroll:
+            self._show_reading_context_menu(event)
+        return True
+
+    def _show_reading_context_menu(self, event):
+        """A right-click on the page while just reading (neither Select
+        Text nor Draw mode active) -- exists so the handful of actions
+        someone's most likely to reach for mid-book are reachable with the
+        mouse alone, without needing to put the book down for a keyboard."""
+        menu = QMenu(self)
+        select_text_action = menu.addAction("Select Text")
+        draw_action = menu.addAction("Draw")
+        bookmark_action = menu.addAction("Add Bookmark")
+        chosen = menu.exec(event.globalPosition().toPoint())
+        if chosen is select_text_action:
+            self.select_text_btn.click()
+        elif chosen is draw_action:
+            self.draw_btn.click()
+        elif chosen is bookmark_action:
+            self.add_bookmark()
 
     # ------------- Click-and-drag panning (zoomed-in pages) -------------
     def _handle_pan_press(self, event):

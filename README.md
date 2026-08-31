@@ -398,20 +398,55 @@ deletes the underlying PDF file.
 |----------------|--------------------------------|
 | ← / →          | Previous / next page          |
 | Scroll         | Turn page (when Fit to Screen is on) or pan (when zoomed in) |
-| Middle-click + Scroll | Turn page even while zoomed in |
-| Ctrl + Scroll  | Zoom in/out                   |
 | =              | Increase text size / zoom in  |
 | -              | Decrease text size / zoom out |
 | F              | Toggle Fit to Screen          |
 | Ctrl + D       | Add a bookmark on this page   |
 | Ctrl + Z       | Undo the last drawing stroke (while in Draw mode) |
 | Click + drag   | Pan around a zoomed-in page   |
+| Right-click    | Opens a menu (Select Text / Draw / Add Bookmark) — see below |
 
 Every shortcut in this table except the Scroll-based ones (mouse-wheel
 interactions, not part of the customizable catalog) can be changed or
 cleared in the Keyboard Shortcuts dialog — including the zoom keys,
 if you'd rather have them require a modifier (e.g. `Ctrl+=`/`Ctrl+-`)
 than the bare `=`/`-` keys they default to.
+
+## Mouse wheel gestures
+
+Five gestures — Ctrl / Shift / Alt held while scrolling, or Middle-Click
+/ Right-Click held while scrolling — are each independently configurable
+to one of three actions: **Zoom In/Out**, **Turn Page While Zoomed**, or
+**None**. By default:
+
+| Gesture                        | Action               |
+|---------------------------------|----------------------|
+| Ctrl + Scroll                   | Zoom In/Out          |
+| Right-Click (hold) + Scroll     | Zoom In/Out          |
+| Middle-Click (hold) + Scroll    | Turn Page While Zoomed |
+| Shift + Scroll                  | None                 |
+| Alt + Scroll                    | None                 |
+
+Unlike the keyboard shortcuts above, more than one gesture can point at
+the same action at once on purpose — Ctrl+Scroll and Right-Click+Scroll
+both zoom simultaneously by default, so use whichever's more natural in
+the moment, or reassign either (or add a third) in the **Mouse Wheel
+Gestures** section of the Keyboard Shortcuts dialog. That section has no
+conflict warning, because two gestures sharing an action isn't a
+conflict here the way two keyboard shortcuts sharing a key would be.
+
+Right-click held through a scroll — using it for the zoom gesture above,
+if that's how it's configured — never also opens the right-click menu
+described below on release; only an actual simple right-click does.
+
+## Right-click reading menu
+
+Right-clicking the page while just reading (not already in Select Text
+or Draw mode — those have their own right-click menus, for editing or
+deleting whatever you clicked on) opens a quick menu: **Select Text**,
+**Draw**, and **Add Bookmark**. It exists for exactly the moments a
+keyboard isn't within reach — reading with your hands on a mouse or
+trackpad rather than a keyboard, notebook on the desk instead.
 
 ## Book details panel
 

@@ -57,7 +57,7 @@ from .pdf_password import PasswordUnlockDialog, strip_or_change_password
 from .presets import GENRE_PRESETS, LANGUAGE_PRESETS, merge_with_used, normalize_custom_value
 from .reader_window import ReaderWindow
 from .search_dialog import TextSearchDialog
-from .shortcuts import effective_shortcut, load_overrides, save_overrides
+from .shortcuts import effective_shortcut, load_overrides, save_overrides, save_wheel_overrides
 from .shortcuts_dialog import ShortcutsDialog
 from .themes import DARK_THEME, LIGHT_THEME
 from .thumbnails import delete_thumbnail, ensure_thumbnail
@@ -561,6 +561,7 @@ class LibraryWindow(QMainWindow):
         if dialog.exec() != QDialog.Accepted:
             return
         save_overrides(self.db, dialog.result_overrides())
+        save_wheel_overrides(self.db, dialog.result_wheel_overrides())
         self._apply_shortcuts()
         for win in self.reader_windows.values():
             win.apply_shortcuts()

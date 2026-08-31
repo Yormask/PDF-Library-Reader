@@ -45,6 +45,44 @@ CATALOG = {
     "reader.undo_drawing": ("Undo Last Drawing Stroke", "Ctrl+Z", "reader"),
 }
 
+# --- Mouse wheel gestures -----------------------------------------------
+# A completely separate, parallel system from CATALOG above: each entry
+# there maps ONE action to (at most) one key combination, and two actions
+# fighting over the same key is a real conflict, since only one of them
+# can actually fire. Wheel gestures work the other way around -- each
+# gesture (a modifier key or a held mouse button, combined with scrolling)
+# independently maps to AT MOST one action, but the same action can
+# legitimately be reachable through more than one gesture at once (e.g.
+# both Ctrl+Scroll and Right-Click+Scroll zooming simultaneously is the
+# intended, expected setup, not a conflict to warn about) -- so this has
+# its own small vocabulary, its own settings key, and no notion of
+# "conflict" at all, rather than being shoehorned into the action->key
+# model above.
+WHEEL_ACTION_NONE = "None"
+WHEEL_ACTION_ZOOM = "Zoom In/Out"
+WHEEL_ACTION_PAGE_TURN = "Turn Page While Zoomed"
+WHEEL_ACTIONS = (WHEEL_ACTION_NONE, WHEEL_ACTION_ZOOM, WHEEL_ACTION_PAGE_TURN)
+
+# gesture_id -> human label, shown as a row in the settings dialog.
+WHEEL_GESTURES = {
+    "ctrl_scroll": "Ctrl + Scroll",
+    "shift_scroll": "Shift + Scroll",
+    "alt_scroll": "Alt + Scroll",
+    "middle_click_scroll": "Middle-Click (hold) + Scroll",
+    "right_click_scroll": "Right-Click (hold) + Scroll",
+}
+
+# gesture_id -> its default action, one of WHEEL_ACTIONS.
+WHEEL_GESTURE_DEFAULTS = {
+    "ctrl_scroll": WHEEL_ACTION_ZOOM,
+    "shift_scroll": WHEEL_ACTION_NONE,
+    "alt_scroll": WHEEL_ACTION_NONE,
+    "middle_click_scroll": WHEEL_ACTION_PAGE_TURN,
+    "right_click_scroll": WHEEL_ACTION_ZOOM,
+}
+
+WHEEL_SETTINGS_KEY = "mouse_wheel_gestures"
+
 
 def load_overrides(db):
     """{action_id: shortcut_string} for every action the user has
@@ -99,3 +137,47 @@ def find_conflicts(overrides):
         if shortcut:
             by_shortcut.setdefault(shortcut, []).append(action_id)
     return {seq: ids for seq, ids in by_shortcut.items() if len(ids) > 1}
+
+
+def load_wheel_overrides(db):
+    """{gesture_id: action_string} for every wheel gesture the user has
+    customized away from its default -- same shape and same "absent
+    means use the default" convention as load_overrides above, just
+    under its own settings key and validated against WHEEL_GESTURES/
+    WHEEL_ACTIONS instead of CATALOG."""
+    raw = db.get_setting(WHEEL_SETTINGS_KEY)
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {
+        k: v for k, v in data.items()
+        if k in WHEEL_GESTURES and v in WHEEL_ACTIONS
+    }
+
+
+def save_wheel_overrides(db, overrides):
+    """overrides: {gesture_id: action_string}. Unlike keyboard shortcut
+    overrides, there's no "explicitly cleared" state to preserve here --
+    every gesture always has a well-defined action (possibly "None"), so
+    an override just directly replaces the default. Only known
+    gesture_ids and action values are persisted."""
+    cleaned = {
+        k: v for k, v in overrides.items()
+        if k in WHEEL_GESTURES and v in WHEEL_ACTIONS
+    }
+    db.set_setting(WHEEL_SETTINGS_KEY, json.dumps(cleaned))
+
+
+def effective_wheel_action(gesture_id, overrides):
+    """The action currently assigned to `gesture_id` given a loaded wheel
+    overrides dict -- the user's override if they set one, otherwise the
+    default from WHEEL_GESTURE_DEFAULTS. Returns WHEEL_ACTION_NONE for an
+    unrecognized gesture_id rather than raising."""
+    if gesture_id in overrides:
+        return overrides[gesture_id]
+    return WHEEL_GESTURE_DEFAULTS.get(gesture_id, WHEEL_ACTION_NONE)
