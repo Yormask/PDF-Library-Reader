@@ -57,8 +57,8 @@ class ArchiveTestCase(unittest.TestCase):
             if os.path.exists(path):
                 os.remove(path)
 
-    def _export(self, include_reading_state=True):
-        manifest, filepaths = build_manifest(self.src_db, include_reading_state=include_reading_state)
+    def _export(self, include_highlights=True):
+        manifest, filepaths = build_manifest(self.src_db, include_highlights=include_highlights)
         write_archive(self.zip_path, manifest, filepaths)
         return manifest
 
@@ -84,11 +84,11 @@ class TestManifestIncludesDrawings(ArchiveTestCase):
         self.assertEqual(d["points"], [[20, 30], [80, 90]])
 
     def test_share_mode_excludes_drawings_same_as_highlights(self):
-        """A share-oriented export (include_reading_state=False) already
-        omits highlights, since covering someone else's book in your own
-        markup would be surprising -- drawings are exactly the same kind
-        of personal reading data and must be excluded the same way."""
-        manifest = self._export(include_reading_state=False)
+        """Turning off include_highlights leaves out both highlights and
+        drawings together -- the app already presents them as one unified
+        list (see the Highlights panel), so there's no separate
+        include_drawings flag to also turn off."""
+        manifest = self._export(include_highlights=False)
         entry = manifest["books"][os.path.basename(self.tmp_pdf)]
         self.assertNotIn("drawings", entry)
         self.assertNotIn("highlights", entry)
@@ -174,8 +174,8 @@ class TestImportRestoresDrawings(ArchiveTestCase):
             if os.path.exists(dst_db_path):
                 os.remove(dst_db_path)
 
-    def test_share_mode_export_then_import_brings_no_drawings(self):
-        self._export(include_reading_state=False)
+    def test_excluding_highlights_on_export_then_import_brings_no_drawings(self):
+        self._export(include_highlights=False)
         dst_db, dst_db_path, dest_dir = self._fresh_destination()
         try:
             summary = apply_archive(dst_db, self.zip_path, dest_dir)
@@ -202,7 +202,7 @@ class TestDrawingSummaryDefaultsGracefully(unittest.TestCase):
         try:
             src_db = Database(src_db_path)
             book = src_db.add_book(tmp_pdf, "Old Archive Format", 1)
-            manifest, filepaths = build_manifest(src_db, include_reading_state=True)
+            manifest, filepaths = build_manifest(src_db)
             # simulate an older manifest shape missing the newer fields
             filename = os.path.basename(tmp_pdf)
             manifest["books"][filename]["drawings"] = [

@@ -40,10 +40,8 @@ from .add_to_category_dialog import AddToCategoryDialog
 from .badges import decorate_thumbnail
 from .book_details_dialog import STATUS_OPTIONS, BookDetailsDialog
 from .bookmark_export import apply_import_data as apply_bookmark_import
-from .bookmark_export import build_export_data as build_bookmark_export
 from .bookmark_export import read_export_file as read_bookmark_export_file
-from .bookmark_export import write_export_file as write_bookmark_export_file
-from .category_export import apply_import_data, build_export_data, read_export_file, write_export_file
+from .category_export import apply_import_data, read_export_file
 from .database import Database
 from .duplicates import compute_file_hash, find_duplicate_groups
 from .file_naming import format_series_number, parse_filename, sync_filename
@@ -52,6 +50,7 @@ from .full_archive import apply_archive as apply_full_archive
 from .full_archive import build_manifest as build_archive_manifest
 from .full_archive import read_manifest as read_archive_manifest
 from .full_archive import write_archive
+from .export_dialog import ExportOptionsDialog
 from .multi_select_combo import ClickToOpenComboBox, MultiSelectComboBox
 from .pdf_password import PasswordUnlockDialog, strip_or_change_password
 from .presets import GENRE_PRESETS, LANGUAGE_PRESETS, merge_with_used, normalize_custom_value
@@ -257,29 +256,19 @@ class LibraryWindow(QMainWindow):
         self.theme_btn.setCheckable(True)
         self.theme_btn.clicked.connect(self.toggle_theme)
 
-        # ---- Export submenu (also used verbatim inside the File menu) ----
-        # Kept as a real attribute, not a local variable -- PySide6 can
-        # garbage-collect a QMenu whose only reference is local even after
-        # addMenu() reparents it at the C++ level, which would crash the
-        # app the moment someone actually opened File > Export.
-        export_menu = QMenu("Export", self)
-        self._export_menu = export_menu
-        export_menu.addAction(
-            "Share Full Archive (PDFs + Categories + Bookmarks)..."
-        ).triggered.connect(self.export_share_full_archive)
-        export_menu.addAction(
-            "Share Selected Books (PDFs + Categories + Bookmarks)..."
-        ).triggered.connect(lambda: self.export_selected_books_share())
-        export_menu.addSeparator()
-        export_menu.addAction(
-            "Full Export (PDFs + Categories + Bookmarks + Reading Data)..."
-        ).triggered.connect(self.export_full_archive)
-        export_menu.addAction(
-            "Selected Books Export (PDFs + Categories + Bookmarks + Reading Data)..."
-        ).triggered.connect(lambda: self.export_selected_books_archive())
-        export_menu.addSeparator()
-        export_menu.addAction("Categories Only...").triggered.connect(self.export_library)
-        export_menu.addAction("Bookmarks Only...").triggered.connect(self.export_bookmarks_only)
+        # ---- Export action -- a single dialog now, not a scoped submenu.
+        # Kept as a real attribute (self.export_action), not a bare local,
+        # for the same reason as import_action just below: something has
+        # to hold a live reference once it's added to the menu bar.
+        export_action = QAction("Export...", self)
+        export_action.setToolTip(
+            "Choose what to include (PDF files, bookmarks, highlights & "
+            "drawings, reading status, reading progress) and export -- "
+            "scoped automatically to your current selection, or the whole "
+            "library if nothing's selected"
+        )
+        export_action.triggered.connect(lambda: self.export_books())
+        self.export_action = export_action
 
         import_action = QAction("Import...", self)
         import_action.setToolTip(
@@ -304,7 +293,7 @@ class LibraryWindow(QMainWindow):
         file_menu.addAction(library_folder_action)
         file_menu.addSeparator()
         file_menu.addAction(import_action)
-        file_menu.addMenu(export_menu)
+        file_menu.addAction(export_action)
 
         view_menu = menubar.addMenu("&View")
         self._view_menu = view_menu
@@ -920,50 +909,31 @@ class LibraryWindow(QMainWindow):
 
     # ------------- Category export / import -------------
     def _export_categories(self, category_ids):
-        """Export every book belonging to any of the given categories."""
+        """Export every book belonging to any of the given categories,
+        through the same unified Export dialog as everywhere else --
+        this just supplies its own explicit book_ids (derived from the
+        categories) as the scope, exactly like the right-click "Export N
+        Selected..." path does with a book selection."""
         book_ids = set()
         for cid in category_ids:
             book_ids.update(b["id"] for b in self.db.get_books(category_id=cid))
-        self._run_export(list(book_ids))
-
-    def export_library(self):
-        """Export every categorized book in the library. (For a narrower
-        export, right-click a specific category instead -- or select several
-        with Ctrl+click/Shift+click and use "Export N Categories..." from
-        their right-click menu.)"""
-        self._run_export(None)
-
-    def _run_export(self, book_ids):
-        """Returns True once the export actually completes, False if there
-        was nothing to export, the save dialog was canceled, or writing
-        failed -- used by callers that only want to react (e.g. clear a
-        selection) on genuine success."""
-        data = build_export_data(self.db, book_ids)
-        if not data["books"]:
+        if not book_ids:
             QMessageBox.information(
                 self, "Nothing to export",
-                "None of those books belong to any category, so there's nothing to export.",
+                "None of those categories have any books in them, so there's nothing to export.",
             )
-            return False
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Export Categories", os.path.expanduser("~/library-categories.json"),
-            "JSON files (*.json)",
-        )
-        if not path:
-            return False
-        try:
-            write_export_file(path, data)
-        except OSError as exc:
-            QMessageBox.critical(self, "Export failed", f"Couldn't write the export file:\n{exc}")
-            return False
-        n_books, n_cats = len(data["books"]), len(data["categories"])
-        QMessageBox.information(
-            self, "Export complete",
-            f"Exported {n_books} book{'s' if n_books != 1 else ''} across {n_cats} "
-            f"categor{'y' if n_cats == 1 else 'ies'} to:\n{path}",
-        )
-        return True
+            return
+        self.export_books(list(book_ids))
 
+    # ------------- Categories-only import (legacy format) -------------
+    # Categories Only and Bookmarks Only used to be separate export
+    # actions, producing their own lightweight JSON formats (see
+    # category_export.py / bookmark_export.py). Both are now just
+    # unchecking "PDF Files" in the unified Export dialog instead --
+    # export_books/_run_full_archive_export below handle that. Only the
+    # IMPORT side of the old formats remains, so a file exported by an
+    # older version of this app still opens correctly; _detect_import_kind
+    # still recognizes them by their "kind" field.
     def _import_categories_file(self, path):
         try:
             data = read_export_file(path)
@@ -979,31 +949,6 @@ class LibraryWindow(QMainWindow):
             f"Matched {summary['matched']} book(s) already in your library.\n"
             f"Skipped {summary['skipped']} book(s) not found here.\n"
             f"Created {n_created} new categor{'y' if n_created == 1 else 'ies'}.",
-        )
-
-    # ------------- Bookmarks-only export / import -------------
-    def export_bookmarks_only(self):
-        data = build_bookmark_export(self.db, None)
-        if not data["books"]:
-            QMessageBox.information(
-                self, "Nothing to export", "No books have any bookmarks yet, so there's nothing to export.",
-            )
-            return
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Export Bookmarks", os.path.expanduser("~/library-bookmarks.json"),
-            "JSON files (*.json)",
-        )
-        if not path:
-            return
-        try:
-            write_bookmark_export_file(path, data)
-        except OSError as exc:
-            QMessageBox.critical(self, "Export failed", f"Couldn't write the export file:\n{exc}")
-            return
-        n_books = len(data["books"])
-        QMessageBox.information(
-            self, "Export complete",
-            f"Exported bookmarks for {n_books} book{'s' if n_books != 1 else ''} to:\n{path}",
         )
 
     def _import_bookmarks_file(self, path):
@@ -1022,75 +967,63 @@ class LibraryWindow(QMainWindow):
         )
 
     # ------------- Full archive export / import -------------
-    def export_full_archive(self):
-        """Full Export: every book in your library, with categories,
-        bookmarks, and your own reading progress (status, favorite,
-        last page read). Best for backing up your whole library or moving
-        it to another machine of your own."""
-        self._run_full_archive_export(None, "Full Export", include_reading_state=True)
-
-    def export_share_full_archive(self):
-        """Share Full Archive: every book in your library, with categories
-        and bookmarks, but not your own reading progress -- so whoever
-        you're handing this to gets a clean copy instead of books that show
-        up mysteriously pre-favorited or already marked Finished."""
-        self._run_full_archive_export(None, "Share Full Archive", include_reading_state=False)
-
-    def export_selected_books_archive(self, book_ids=None, clear_selection_after=False):
-        """Selected Books Export: just the given books (or the current
-        selection, if book_ids isn't passed) -- categories, bookmarks, and
-        your own reading progress. Best for backing up a subset of your
-        library or moving it to another machine of your own, since that
-        reading state is exactly what you'd want restored. For sending
-        books to someone else, use "Share Selected Books" instead."""
-        book_ids = list(book_ids) if book_ids is not None else list(self._selected_book_ids)
-        if not book_ids:
-            QMessageBox.information(
-                self, "No books selected",
-                "Turn on Select, then click (or Ctrl+click/Shift+click for "
-                "several) the books you want to export first.",
-            )
+    def export_books(self, book_ids=None, clear_selection_after=False):
+        """The single Export entry point. Scope is decided automatically,
+        not chosen in a dialog: pass explicit book_ids (the right-click
+        "Export N Selected..." path, or a category's derived book_ids)
+        to scope to exactly those; otherwise, a non-empty current
+        selection scopes to that, and an empty one exports the whole
+        library -- matching how Select mode already works everywhere
+        else in this window, so there's nothing new to learn. Content
+        (PDF files/bookmarks/highlights/reading status/reading progress)
+        is customized in ExportOptionsDialog; unchecking PDF Files there
+        produces the same kind of lightweight, metadata-only export the
+        old separate Categories/Bookmarks Only actions used to."""
+        if book_ids is None:
+            book_ids = list(self._selected_book_ids) if self._selected_book_ids else None
+        is_selection = book_ids is not None
+        total = len(book_ids) if is_selection else len(self.db.get_books())
+        if total == 0:
+            QMessageBox.information(self, "Nothing to export", "There's nothing to export.")
             return
+
+        dialog = ExportOptionsDialog(total, is_selection, self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        include_pdf_files, include_bookmarks, include_highlights, include_status, include_progress = (
+            dialog.options()
+        )
+
         success = self._run_full_archive_export(
-            book_ids, "Selected Books Export", include_reading_state=True
+            book_ids, "Export",
+            include_pdf_files=include_pdf_files,
+            include_bookmarks=include_bookmarks, include_highlights=include_highlights,
+            include_reading_status=include_status, include_reading_progress=include_progress,
         )
         if success and clear_selection_after:
             self.clear_selection()
 
-    def export_selected_books_share(self, book_ids=None, clear_selection_after=False):
-        """Share Selected Books: just the given books (or the current
-        selection, if book_ids isn't passed) -- categories and bookmarks
-        travel over, but not your own status/favorite/last-page -- so their
-        copy starts clean."""
-        book_ids = list(book_ids) if book_ids is not None else list(self._selected_book_ids)
-        if not book_ids:
-            QMessageBox.information(
-                self, "No books selected",
-                "Turn on Select, then click (or Ctrl+click/Shift+click for "
-                "several) the books you want to share first.",
-            )
-            return
-        success = self._run_full_archive_export(
-            book_ids, "Share Selected Books", include_reading_state=False
-        )
-        if success and clear_selection_after:
-            self.clear_selection()
-
-    def _run_full_archive_export(self, book_ids, dialog_title, include_reading_state=True):
+    def _run_full_archive_export(
+        self, book_ids, dialog_title, include_pdf_files=True,
+        include_bookmarks=True, include_highlights=True,
+        include_reading_status=True, include_reading_progress=True,
+    ):
         """Returns True once the export actually completes, False if there
         was nothing to export, the save dialog was canceled, the write
         failed, or the user cancelled partway through -- used by callers
         that only want to react (e.g. clear a selection) on genuine
         success."""
         manifest, filepaths = build_archive_manifest(
-            self.db, book_ids, include_reading_state=include_reading_state
+            self.db, book_ids,
+            include_bookmarks=include_bookmarks, include_highlights=include_highlights,
+            include_reading_status=include_reading_status, include_reading_progress=include_reading_progress,
         )
         if not manifest["books"]:
             QMessageBox.information(
                 self, "Nothing to export", "There's nothing to export.",
             )
             return False
-        default_name = "library-backup.zip" if book_ids is None else "shared-books.zip"
+        default_name = "library-export.zip" if book_ids is None else "selected-books-export.zip"
         path, _ = QFileDialog.getSaveFileName(
             self, dialog_title, os.path.expanduser(f"~/{default_name}"),
             "ZIP archives (*.zip)",
@@ -1100,6 +1033,11 @@ class LibraryWindow(QMainWindow):
 
         # Copying potentially many/large PDFs into a zip can take a while --
         # show real progress instead of leaving the window looking frozen.
+        # (When include_pdf_files is False there's nothing to copy, so this
+        # finishes near-instantly regardless -- shown anyway rather than
+        # special-cased away, since write_archive still reports progress
+        # per book either way and the dialog closes itself the moment
+        # writing actually finishes.)
         total = len(manifest["books"])
         progress = QProgressDialog("Preparing export...", "Cancel", 0, total, self)
         progress.setWindowTitle(dialog_title)
@@ -1116,7 +1054,10 @@ class LibraryWindow(QMainWindow):
             QApplication.processEvents()
 
         try:
-            skipped = write_archive(path, manifest, filepaths, progress_callback=on_progress)
+            skipped = write_archive(
+                path, manifest, filepaths, progress_callback=on_progress,
+                include_pdf_files=include_pdf_files,
+            )
         except _ExportCancelledError:
             progress.close()
             try:
@@ -1131,9 +1072,22 @@ class LibraryWindow(QMainWindow):
         progress.close()
 
         n_books = len(manifest["books"]) - len(skipped)
-        detail = "categories, bookmarks, and reading progress" if include_reading_state \
-            else "categories and bookmarks"
-        msg = f"Exported {n_books} book(s) (with {detail}) to:\n{path}"
+        extras = []
+        if include_bookmarks:
+            extras.append("bookmarks")
+        if include_highlights:
+            extras.append("highlights & drawings")
+        if include_reading_status:
+            extras.append("reading status")
+        if include_reading_progress:
+            extras.append("reading progress")
+        contents = (["PDF files"] if include_pdf_files else []) + ["categories"] + extras
+        if len(contents) == 1:
+            detail = contents[0]
+        else:
+            detail = ", ".join(contents[:-1]) + ", and " + contents[-1]
+        verb = "Exported" if include_pdf_files else "Exported metadata for"
+        msg = f"{verb} {n_books} book(s) ({detail}) to:\n{path}"
         if skipped:
             msg += f"\n\n{len(skipped)} book(s) were skipped because their file couldn't be found on disk."
         QMessageBox.information(self, "Export complete", msg)
@@ -1354,14 +1308,8 @@ class LibraryWindow(QMainWindow):
         )
         status_menu = menu.addMenu(f"Mark {n} Selected as")
         self._populate_status_menu(status_menu, list(book_ids), clear_selection_after=True)
-        export_menu = menu.addMenu("Exports")
-        export_menu.addAction("Share Selected Books (PDFs + Categories + Bookmarks)...").triggered.connect(
-            lambda: self.export_selected_books_share(list(book_ids), clear_selection_after=True)
-        )
-        export_menu.addAction(
-            "Selected Books Export (PDFs + Categories + Bookmarks + Reading Data)..."
-        ).triggered.connect(
-            lambda: self.export_selected_books_archive(list(book_ids), clear_selection_after=True)
+        menu.addAction(f"Export {n} Selected...").triggered.connect(
+            lambda: self.export_books(list(book_ids), clear_selection_after=True)
         )
         menu.addAction(f"Remove {n} Selected from Library").triggered.connect(
             lambda: self._bulk_remove_books(list(book_ids))

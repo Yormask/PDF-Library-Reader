@@ -1,7 +1,8 @@
 """Full backup archive: a ZIP containing the actual PDF files plus a
 manifest of everything that isn't already encoded in their filenames --
-categories, bookmarks, reading status, favorite, annotation, reading
-progress, saved highlights, and drawn annotations. The natural way to
+categories and annotation always, and bookmarks, reading status,
+favorite, reading progress, saved highlights, and drawn annotations as
+independently optional extras (see build_manifest). The natural way to
 move (or back up) an entire library, not just its categorization.
 """
 import json
@@ -16,21 +17,35 @@ MANIFEST_NAME = "manifest.json"
 BOOKS_DIR = "books"
 
 
-def build_manifest(db, book_ids=None, include_reading_state=True):
+def build_manifest(
+    db, book_ids=None,
+    include_bookmarks=True, include_highlights=True,
+    include_reading_status=True, include_reading_progress=True,
+):
     """Returns (manifest_dict, {filename: source_filepath}).
 
-    include_reading_state controls whether each book's personal reading
-    data -- status, favorite flag, last-read page, saved highlights, and
-    drawn annotations -- is included. That data makes sense for a backup
-    of your own library (restoring it to yourself elsewhere should put
-    you back where you left off), but imposing it on someone you're
-    sharing books with doesn't: they'd end up with books mysteriously
-    pre-marked "Finished" or already favorited, resuming mid-book at a
-    page they never reached, or covered in someone else's highlights and
-    drawings. Pass False for a share-oriented export -- the importing
-    side already treats a missing status/is_favorite/last_page/
-    highlights/drawings as "leave it alone", so simply omitting them here
-    is enough; no changes needed on the import path.
+    Each book's categories and free-text annotation always travel with
+    it -- that's what makes an export a coherent piece of your library
+    rather than just a folder of PDFs. Everything else is opt-in,
+    independently, via the four flags here (all True by default, matching
+    the export dialog's own defaults):
+    - include_bookmarks: saved bookmarks
+    - include_highlights: saved highlights AND drawn annotations (bundled
+      together -- the app already presents them as one unified list, so
+      splitting them into two separate opt-in flags would offer a
+      distinction the user never actually sees anywhere else)
+    - include_reading_status: status (unread/reading/finished) and the
+      favorite flag
+    - include_reading_progress: last-read page
+
+    Turning some or all of these off matters most when handing books to
+    someone else rather than backing up your own library -- they
+    shouldn't receive books mysteriously pre-marked "Finished", already
+    favorited, resuming mid-book at a page they never reached, or covered
+    in someone else's highlights and drawings. The importing side already
+    treats a missing field as "leave it alone" (see apply_archive), so
+    simply omitting it here is enough; nothing on the import path needs
+    to know which flags produced the manifest it's reading.
     """
     if book_ids is None:
         book_ids = [b["id"] for b in db.get_books()]
@@ -44,18 +59,21 @@ def build_manifest(db, book_ids=None, include_reading_state=True):
             continue
         filename = os.path.basename(book["filepath"])
         cats = db.get_categories_for_book(book_id)
-        bookmarks = db.get_bookmarks(book_id)
         entry = {
             "categories": [c["name"] for c in cats],
-            "bookmarks": [
-                {"page_number": bm["page_number"], "label": bm["label"] or ""} for bm in bookmarks
-            ],
             "annotation": book["annotation"] or "",
         }
-        if include_reading_state:
+        if include_bookmarks:
+            entry["bookmarks"] = [
+                {"page_number": bm["page_number"], "label": bm["label"] or ""}
+                for bm in db.get_bookmarks(book_id)
+            ]
+        if include_reading_status:
             entry["status"] = book["status"] or "unread"
             entry["is_favorite"] = bool(book["is_favorite"])
+        if include_reading_progress:
             entry["last_page"] = book["last_page"] or 0
+        if include_highlights:
             entry["highlights"] = [
                 {
                     "page_number": h["page_number"], "color": h["color"],
@@ -86,10 +104,21 @@ def build_manifest(db, book_ids=None, include_reading_state=True):
     return manifest, filepaths
 
 
-def write_archive(zip_path, manifest, filepaths, progress_callback=None):
+def write_archive(zip_path, manifest, filepaths, progress_callback=None, include_pdf_files=True):
     """Writes manifest.json plus every PDF (under books/) into the zip.
     Returns a list of filenames that were skipped because their source file
     no longer existed on disk at export time.
+
+    include_pdf_files=False skips bundling the PDFs themselves, writing
+    just manifest.json -- a lightweight, metadata-only export (e.g. just
+    categories, or just bookmarks, or any other combination the manifest
+    was built with) for syncing between installs that already share the
+    same PDF files. apply_archive already applies metadata directly to a
+    book it finds already present by filename, without needing to extract
+    a PDF for it, so nothing on the import side needs to know or care
+    that this zip's books/ folder is empty; the file kind is still
+    detected as "full_archive" the same way (see _detect_import_kind),
+    since it's still a real zip either way.
 
     If given, progress_callback(index, total, filename) is called after each
     file is handled (index starting at 1) -- copying many/large PDFs into a
@@ -103,10 +132,11 @@ def write_archive(zip_path, manifest, filepaths, progress_callback=None):
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr(MANIFEST_NAME, json.dumps(manifest, indent=2, ensure_ascii=False))
         for i, (filename, source_path) in enumerate(filepaths.items(), start=1):
-            if not os.path.exists(source_path):
-                skipped.append(filename)
-            else:
-                zf.write(source_path, arcname=f"{BOOKS_DIR}/{filename}")
+            if include_pdf_files:
+                if not os.path.exists(source_path):
+                    skipped.append(filename)
+                else:
+                    zf.write(source_path, arcname=f"{BOOKS_DIR}/{filename}")
             if progress_callback:
                 progress_callback(i, total, filename)
     return skipped

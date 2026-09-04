@@ -180,38 +180,53 @@ and a distraction-free "simple text" reading mode.
   or bulk-exporting several categories at once via the right-click menu
   (a plain click still just filters by that one category, as before).
 
-  **Export.../Import...** in the toolbar are now dropdown menus with four
-  scoped options on Export (Import stays generic — it reads whatever's in
-  the file, however it was scoped at export time):
-  - **Full Archive** — a ZIP containing the actual PDF files plus a
-    manifest of everything that isn't already encoded in their filenames:
-    categories, bookmarks, reading status, favorite, annotation, reading
-    progress, saved highlights, and drawn annotations. The real "move (or
-    back up) my whole library" option — importing onto a fresh device
-    with zero existing books extracts the PDFs and restores everything
-    else automatically.
-  - **Selected Books** — the same as Full Archive (actual PDF files plus
-    all their metadata), but scoped to whatever you've currently selected
-    via **Select** mode (click, Ctrl+click, Shift+click for a range). The
-    natural way to share one book or a handful of them with someone else —
-    a categories/bookmarks-only export would be useless to them, since they
-    don't have those books yet.
-  - **Categories Only** — a plain JSON file, matched by filename rather
-    than exact path, moving just category memberships (and their favorite
-    status). Since Title/Author/Series/Genre/Language already travel with
-    the files themselves via their filenames, this stays deliberately
-    narrow.
-  - **Bookmarks Only** — the same idea, just for bookmarks.
+  **Export...** in the toolbar opens a single dialog rather than a
+  scoped menu of separate options — what goes in and which books are
+  included are now two independent, straightforward choices instead of
+  one combined menu pick:
+  - **Scope is automatic, not chosen in the dialog.** No books selected
+    when you click Export → every book in your library. Some books
+    selected first (via **Select** mode — click, Ctrl+click, Shift+click
+    for a range) → just those. The dialog's own heading always confirms
+    which one applies ("Exporting all 42 books" or "Exporting 3 selected
+    books") before you commit to anything.
+  - **Content is checkboxes.** Category memberships always travel along —
+    that's the one thing every export keeps, so even the lightest one is
+    still a coherent piece of your library rather than an uncategorized
+    file list — and five more pieces are independently optional: **PDF
+    Files**, **Bookmarks**, **Highlights & Drawings** (bundled together,
+    since the app already shows them as one unified list), **Reading
+    Status** (unread/reading/finished and favorites), and **Reading
+    Progress** (last page read). All five start checked.
+    - Uncheck everything except **PDF Files** to share books with someone
+      else without handing over your own notes or reading history — they
+      shouldn't receive books mysteriously pre-marked "Finished", already
+      favorited, or covered in your own highlights and drawings.
+    - Uncheck **PDF Files** itself for a lightweight, metadata-only
+      export instead — the file is still a `.zip`, just without the PDFs
+      themselves inside it, useful for syncing categories/bookmarks/etc.
+      between installs that already share the same PDF files (matched by
+      filename on import, same as everything else here). This is what the
+      old separate "Categories Only" and "Bookmarks Only" actions used to
+      be — now it's just this one checkbox instead of two more menu
+      items.
+    - Leave everything checked for a full personal backup, or pick
+      whatever mix actually fits the moment.
 
-  For a narrower category export, right-click a category (or Ctrl+click/
-  Shift+click to select several first) and choose **Export...** there
-  instead of the toolbar's whole-library version. Every import matches
-  books already in your library by filename and reports how many matched
-  vs. weren't found; re-importing the same file is always safe (nothing
-  gets duplicated). All of this is deliberately manual and explicit rather
-  than an always-on background sync, so two devices working from a
-  shared/synced folder can't silently overwrite each other's data without
-  you choosing to do it.
+  For a narrower export, right-click a category (or Ctrl+click/Shift+click
+  to select several first) and choose **Export...** there instead of the
+  toolbar's whole-library version — it opens the same dialog, scoped to
+  that category's books. **Import...** stays generic regardless of any of
+  this — it reads whatever's actually in the file and applies it
+  automatically (including files exported by an older version of this
+  app, in the old separate Categories/Bookmarks JSON formats — those
+  still import correctly even though nothing produces them anymore).
+  Every import matches books already in your library by filename and
+  reports how many matched vs. weren't found; re-importing the same file
+  is always safe (nothing gets duplicated). All of this is deliberately
+  manual and explicit rather than an always-on background sync, so two
+  devices working from a shared/synced folder can't silently overwrite
+  each other's data without you choosing to do it.
 - **Bookmarks** — save a bookmark (with an optional label) on any page inside
   a book, jump back to it later, remove it when you're done. The panel has
   its own "Bookmarks" toggle button next to "+ Bookmark" in the toolbar, so
