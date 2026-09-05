@@ -59,6 +59,7 @@ class TestExportOptionsDialog(unittest.TestCase):
     def test_all_checkboxes_default_checked(self):
         dlg = ExportOptionsDialog(1, is_selection=False)
         self.assertTrue(dlg.pdf_check.isChecked())
+        self.assertTrue(dlg.categories_check.isChecked())
         self.assertTrue(dlg.bookmarks_check.isChecked())
         self.assertTrue(dlg.highlights_check.isChecked())
         self.assertTrue(dlg.status_check.isChecked())
@@ -68,16 +69,17 @@ class TestExportOptionsDialog(unittest.TestCase):
         dlg = ExportOptionsDialog(1, is_selection=False)
         dlg.highlights_check.setChecked(False)
         dlg.progress_check.setChecked(False)
-        self.assertEqual(dlg.options(), (True, True, False, True, False))
+        self.assertEqual(dlg.options(), (True, True, True, False, True, False))
 
     def test_unchecking_everything_yields_all_false(self):
         dlg = ExportOptionsDialog(1, is_selection=False)
         dlg.pdf_check.setChecked(False)
+        dlg.categories_check.setChecked(False)
         dlg.bookmarks_check.setChecked(False)
         dlg.highlights_check.setChecked(False)
         dlg.status_check.setChecked(False)
         dlg.progress_check.setChecked(False)
-        self.assertEqual(dlg.options(), (False, False, False, False, False))
+        self.assertEqual(dlg.options(), (False, False, False, False, False, False))
 
     def test_pdf_files_can_be_unchecked_independently(self):
         """The actual point of this checkbox: a lightweight, PDF-less
@@ -85,18 +87,25 @@ class TestExportOptionsDialog(unittest.TestCase):
         the old separate Categories/Bookmarks Only actions."""
         dlg = ExportOptionsDialog(1, is_selection=False)
         dlg.pdf_check.setChecked(False)
-        self.assertEqual(dlg.options(), (False, True, True, True, True))
+        self.assertEqual(dlg.options(), (False, True, True, True, True, True))
+
+    def test_categories_can_be_unchecked_independently(self):
+        dlg = ExportOptionsDialog(1, is_selection=False)
+        dlg.categories_check.setChecked(False)
+        self.assertEqual(dlg.options(), (True, False, True, True, True, True))
 
 
 class TestBuildManifestGranularFlags(unittest.TestCase):
-    """The four flags are independent -- each gates its own piece of
-    data, and none of them affect categories or annotation, which
-    always travel along."""
+    """The five flags are independent -- each gates its own piece of
+    data, and none of them affect the annotation field, which always
+    travels along."""
 
     def setUp(self):
         self.tmp_db = tempfile.mktemp(suffix=".db")
         self.db = Database(self.tmp_db)
         self.book, self.tmp_pdf = _make_book(self.db)
+        self.category = self.db.create_category("Fiction")
+        self.db.add_books_to_category(self.category["id"], [self.book["id"]])
         self.db.add_bookmark(self.book["id"], 0, "a bookmark")
         self.db.add_highlight(self.book["id"], 0, "#3878FF", [[10, 10, 100, 30]], text="hi")
         self.db.add_drawing(self.book["id"], 0, "pen", "#FF0000", 0.5, 2.0, [[0, 0], [5, 5]])
@@ -113,13 +122,30 @@ class TestBuildManifestGranularFlags(unittest.TestCase):
         manifest, _ = build_manifest(self.db, **flags)
         return manifest["books"][os.path.basename(self.tmp_pdf)]
 
-    def test_categories_and_annotation_always_included(self):
+    def _entry_and_manifest(self, **flags):
+        manifest, _ = build_manifest(self.db, **flags)
+        return manifest["books"][os.path.basename(self.tmp_pdf)], manifest
+
+    def test_annotation_always_included(self):
         entry = self._entry(
-            include_bookmarks=False, include_highlights=False,
+            include_categories=False, include_bookmarks=False, include_highlights=False,
             include_reading_status=False, include_reading_progress=False,
         )
-        self.assertIn("categories", entry)
         self.assertIn("annotation", entry)
+
+    def test_include_categories_gates_categories(self):
+        with_it, manifest_with = self._entry_and_manifest(
+            include_categories=True, include_bookmarks=False, include_highlights=False,
+            include_reading_status=False, include_reading_progress=False,
+        )
+        without_it, manifest_without = self._entry_and_manifest(
+            include_categories=False, include_bookmarks=False, include_highlights=False,
+            include_reading_status=False, include_reading_progress=False,
+        )
+        self.assertIn("categories", with_it)
+        self.assertIn("Fiction", manifest_with["categories"])
+        self.assertNotIn("categories", without_it)
+        self.assertEqual(manifest_without["categories"], {})
 
     def test_include_bookmarks_gates_only_bookmarks(self):
         with_it = self._entry(include_bookmarks=True, include_highlights=False,
@@ -159,13 +185,22 @@ class TestBuildManifestGranularFlags(unittest.TestCase):
 
     def test_all_flags_default_to_true(self):
         entry = self._entry()
-        for key in ("bookmarks", "highlights", "drawings", "status", "is_favorite", "last_page"):
+        for key in ("categories", "bookmarks", "highlights", "drawings", "status", "is_favorite", "last_page"):
             self.assertIn(key, entry)
 
     def test_flags_are_independent_of_each_other(self):
         """Turning one off must not affect any of the others."""
         entry = self._entry(include_bookmarks=False)
         self.assertNotIn("bookmarks", entry)
+        self.assertIn("categories", entry)
+        self.assertIn("highlights", entry)
+        self.assertIn("status", entry)
+        self.assertIn("last_page", entry)
+
+    def test_turning_off_categories_does_not_affect_others(self):
+        entry = self._entry(include_categories=False)
+        self.assertNotIn("categories", entry)
+        self.assertIn("bookmarks", entry)
         self.assertIn("highlights", entry)
         self.assertIn("status", entry)
         self.assertIn("last_page", entry)
@@ -176,6 +211,8 @@ class TestGranularExportImportRoundTrip(unittest.TestCase):
         self.tmp_db = tempfile.mktemp(suffix=".db")
         self.db = Database(self.tmp_db)
         self.book, self.tmp_pdf = _make_book(self.db)
+        self.category = self.db.create_category("Fiction")
+        self.db.add_books_to_category(self.category["id"], [self.book["id"]])
         self.db.add_bookmark(self.book["id"], 0, "a bookmark")
         self.db.add_highlight(self.book["id"], 0, "#3878FF", [[10, 10, 100, 30]], text="hi")
         self.db.set_status(self.book["id"], "finished")
@@ -189,7 +226,7 @@ class TestGranularExportImportRoundTrip(unittest.TestCase):
 
     def test_pdf_only_export_imports_with_no_extra_data(self):
         manifest, filepaths = build_manifest(
-            self.db, include_bookmarks=False, include_highlights=False,
+            self.db, include_categories=False, include_bookmarks=False, include_highlights=False,
             include_reading_status=False, include_reading_progress=False,
         )
         write_archive(self.zip_path, manifest, filepaths)
@@ -205,13 +242,35 @@ class TestGranularExportImportRoundTrip(unittest.TestCase):
             self.assertIsNotNone(new_book)  # the PDF itself still imported
             self.assertEqual(dst_db.get_book(new_book["id"])["status"], "unread")
             self.assertEqual(dst_db.get_book(new_book["id"])["last_page"], 0)
+            self.assertEqual(dst_db.get_categories_for_book(new_book["id"]), [])
+        finally:
+            if os.path.exists(dst_db_path):
+                os.remove(dst_db_path)
+
+    def test_categories_only_export_imports_just_the_category(self):
+        manifest, filepaths = build_manifest(
+            self.db, include_categories=True, include_bookmarks=False, include_highlights=False,
+            include_reading_status=False, include_reading_progress=False,
+        )
+        write_archive(self.zip_path, manifest, filepaths)
+
+        dst_db_path = tempfile.mktemp(suffix=".db")
+        dst_db = Database(dst_db_path)
+        dest_dir = tempfile.mkdtemp()
+        try:
+            summary = apply_archive(dst_db, self.zip_path, dest_dir)
+            self.assertEqual(summary["categories_created"], 1)
+            self.assertEqual(summary["bookmarks_added"], 0)
+            new_book = dst_db.get_book_by_filename(os.path.basename(self.tmp_pdf))
+            new_cats = [c["name"] for c in dst_db.get_categories_for_book(new_book["id"])]
+            self.assertEqual(new_cats, ["Fiction"])
         finally:
             if os.path.exists(dst_db_path):
                 os.remove(dst_db_path)
 
     def test_bookmarks_only_export_imports_just_bookmarks(self):
         manifest, filepaths = build_manifest(
-            self.db, include_bookmarks=True, include_highlights=False,
+            self.db, include_categories=False, include_bookmarks=True, include_highlights=False,
             include_reading_status=False, include_reading_progress=False,
         )
         write_archive(self.zip_path, manifest, filepaths)
@@ -223,6 +282,7 @@ class TestGranularExportImportRoundTrip(unittest.TestCase):
             summary = apply_archive(dst_db, self.zip_path, dest_dir)
             self.assertEqual(summary["bookmarks_added"], 1)
             self.assertEqual(summary["highlights_added"], 0)
+            self.assertEqual(summary["categories_created"], 0)
             new_book = dst_db.get_book_by_filename(os.path.basename(self.tmp_pdf))
             self.assertEqual(dst_db.get_book(new_book["id"])["status"], "unread")
         finally:

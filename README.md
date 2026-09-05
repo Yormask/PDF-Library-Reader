@@ -190,25 +190,27 @@ and a distraction-free "simple text" reading mode.
     for a range) → just those. The dialog's own heading always confirms
     which one applies ("Exporting all 42 books" or "Exporting 3 selected
     books") before you commit to anything.
-  - **Content is checkboxes.** Category memberships always travel along —
-    that's the one thing every export keeps, so even the lightest one is
-    still a coherent piece of your library rather than an uncategorized
-    file list — and five more pieces are independently optional: **PDF
-    Files**, **Bookmarks**, **Highlights & Drawings** (bundled together,
-    since the app already shows them as one unified list), **Reading
-    Status** (unread/reading/finished and favorites), and **Reading
-    Progress** (last page read). All five start checked.
+  - **Content is checkboxes.** Each book's free-text annotation always
+    travels along — it's small enough that there's no real case for
+    wanting a copy without it — and six pieces are independently
+    optional: **PDF Files**, **Categories**, **Bookmarks**, **Highlights
+    & Drawings** (bundled together, since the app already shows them as
+    one unified list), **Reading Status** (unread/reading/finished and
+    favorites), and **Reading Progress** (last page read). All six start
+    checked.
     - Uncheck everything except **PDF Files** to share books with someone
-      else without handing over your own notes or reading history — they
-      shouldn't receive books mysteriously pre-marked "Finished", already
-      favorited, or covered in your own highlights and drawings.
+      else without handing over your own categories, notes, or reading
+      history — they shouldn't receive books mysteriously pre-marked
+      "Finished", already favorited, sorted into categories that only
+      make sense in your own library, or covered in your own highlights
+      and drawings.
     - Uncheck **PDF Files** itself for a lightweight, metadata-only
       export instead — the file is still a `.zip`, just without the PDFs
       themselves inside it, useful for syncing categories/bookmarks/etc.
       between installs that already share the same PDF files (matched by
       filename on import, same as everything else here). This is what the
       old separate "Categories Only" and "Bookmarks Only" actions used to
-      be — now it's just this one checkbox instead of two more menu
+      be — now it's just these checkboxes instead of separate menu
       items.
     - Leave everything checked for a full personal backup, or pick
       whatever mix actually fits the moment.

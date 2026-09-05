@@ -975,10 +975,11 @@ class LibraryWindow(QMainWindow):
         selection scopes to that, and an empty one exports the whole
         library -- matching how Select mode already works everywhere
         else in this window, so there's nothing new to learn. Content
-        (PDF files/bookmarks/highlights/reading status/reading progress)
-        is customized in ExportOptionsDialog; unchecking PDF Files there
-        produces the same kind of lightweight, metadata-only export the
-        old separate Categories/Bookmarks Only actions used to."""
+        (PDF files/categories/bookmarks/highlights/reading status/reading
+        progress) is customized in ExportOptionsDialog; unchecking PDF
+        Files there produces the same kind of lightweight, metadata-only
+        export the old separate Categories/Bookmarks Only actions used
+        to."""
         if book_ids is None:
             book_ids = list(self._selected_book_ids) if self._selected_book_ids else None
         is_selection = book_ids is not None
@@ -990,13 +991,14 @@ class LibraryWindow(QMainWindow):
         dialog = ExportOptionsDialog(total, is_selection, self)
         if dialog.exec() != QDialog.Accepted:
             return
-        include_pdf_files, include_bookmarks, include_highlights, include_status, include_progress = (
-            dialog.options()
-        )
+        (
+            include_pdf_files, include_categories, include_bookmarks,
+            include_highlights, include_status, include_progress,
+        ) = dialog.options()
 
         success = self._run_full_archive_export(
             book_ids, "Export",
-            include_pdf_files=include_pdf_files,
+            include_pdf_files=include_pdf_files, include_categories=include_categories,
             include_bookmarks=include_bookmarks, include_highlights=include_highlights,
             include_reading_status=include_status, include_reading_progress=include_progress,
         )
@@ -1004,7 +1006,7 @@ class LibraryWindow(QMainWindow):
             self.clear_selection()
 
     def _run_full_archive_export(
-        self, book_ids, dialog_title, include_pdf_files=True,
+        self, book_ids, dialog_title, include_pdf_files=True, include_categories=True,
         include_bookmarks=True, include_highlights=True,
         include_reading_status=True, include_reading_progress=True,
     ):
@@ -1015,6 +1017,7 @@ class LibraryWindow(QMainWindow):
         success."""
         manifest, filepaths = build_archive_manifest(
             self.db, book_ids,
+            include_categories=include_categories,
             include_bookmarks=include_bookmarks, include_highlights=include_highlights,
             include_reading_status=include_reading_status, include_reading_progress=include_reading_progress,
         )
@@ -1081,8 +1084,15 @@ class LibraryWindow(QMainWindow):
             extras.append("reading status")
         if include_reading_progress:
             extras.append("reading progress")
-        contents = (["PDF files"] if include_pdf_files else []) + ["categories"] + extras
-        if len(contents) == 1:
+        contents = []
+        if include_pdf_files:
+            contents.append("PDF files")
+        if include_categories:
+            contents.append("categories")
+        contents += extras
+        if not contents:
+            detail = "annotations only"  # everything else unchecked -- still always included
+        elif len(contents) == 1:
             detail = contents[0]
         else:
             detail = ", ".join(contents[:-1]) + ", and " + contents[-1]

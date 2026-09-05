@@ -1,6 +1,6 @@
 """Full backup archive: a ZIP containing the actual PDF files plus a
 manifest of everything that isn't already encoded in their filenames --
-categories and annotation always, and bookmarks, reading status,
+the annotation field always, and categories, bookmarks, reading status,
 favorite, reading progress, saved highlights, and drawn annotations as
 independently optional extras (see build_manifest). The natural way to
 move (or back up) an entire library, not just its categorization.
@@ -19,16 +19,18 @@ BOOKS_DIR = "books"
 
 def build_manifest(
     db, book_ids=None,
-    include_bookmarks=True, include_highlights=True,
+    include_categories=True, include_bookmarks=True, include_highlights=True,
     include_reading_status=True, include_reading_progress=True,
 ):
     """Returns (manifest_dict, {filename: source_filepath}).
 
-    Each book's categories and free-text annotation always travel with
-    it -- that's what makes an export a coherent piece of your library
-    rather than just a folder of PDFs. Everything else is opt-in,
-    independently, via the four flags here (all True by default, matching
-    the export dialog's own defaults):
+    Each book's free-text annotation always travels with it -- it's
+    small, personal-but-not-sensitive, and there's no real use case for
+    wanting a copy of your library without it. Everything else is
+    opt-in, independently, via the five flags here (all True by default,
+    matching the export dialog's own defaults):
+    - include_categories: category memberships, plus each category's own
+      favorite-category flag
     - include_bookmarks: saved bookmarks
     - include_highlights: saved highlights AND drawn annotations (bundled
       together -- the app already presents them as one unified list, so
@@ -41,7 +43,8 @@ def build_manifest(
     Turning some or all of these off matters most when handing books to
     someone else rather than backing up your own library -- they
     shouldn't receive books mysteriously pre-marked "Finished", already
-    favorited, resuming mid-book at a page they never reached, or covered
+    favorited, resuming mid-book at a page they never reached, sorted
+    into categories that only make sense in your own library, or covered
     in someone else's highlights and drawings. The importing side already
     treats a missing field as "leave it alone" (see apply_archive), so
     simply omitting it here is enough; nothing on the import path needs
@@ -58,11 +61,14 @@ def build_manifest(
         if not book:
             continue
         filename = os.path.basename(book["filepath"])
-        cats = db.get_categories_for_book(book_id)
         entry = {
-            "categories": [c["name"] for c in cats],
             "annotation": book["annotation"] or "",
         }
+        if include_categories:
+            cats = db.get_categories_for_book(book_id)
+            entry["categories"] = [c["name"] for c in cats]
+            for c in cats:
+                categories_seen[c["name"]] = bool(c["is_favorite"])
         if include_bookmarks:
             entry["bookmarks"] = [
                 {"page_number": bm["page_number"], "label": bm["label"] or ""}
@@ -90,8 +96,6 @@ def build_manifest(
                 for d in db.get_drawings(book_id)
             ]
         books_out[filename] = entry
-        for c in cats:
-            categories_seen[c["name"]] = bool(c["is_favorite"])
         filepaths[filename] = book["filepath"]
 
     manifest = {

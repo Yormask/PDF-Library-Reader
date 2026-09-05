@@ -1,10 +1,10 @@
 """ExportOptionsDialog -- the single, unified "Export..." entry point.
 Customizable checkboxes for exactly what an export contains: the PDF
-files themselves, plus bookmarks, highlights & drawings, reading status,
-and reading progress, independently. Category memberships always travel
-along regardless -- that's what makes even the lightest export (PDF
-Files unchecked, everything else unchecked too) still a coherent piece
-of a library rather than a bare, uncategorized file list.
+files themselves, category memberships, bookmarks, highlights &
+drawings, reading status, and reading progress -- all six independently
+optional. The only thing that always travels along is each book's
+free-text annotation, which is small enough that there's no real case
+for wanting a copy of a library without it.
 
 Unchecking PDF Files produces the same kind of lightweight, metadata-only
 export the old separate "Categories Only" and "Bookmarks Only" actions
@@ -35,7 +35,7 @@ class ExportOptionsDialog(QDialog):
         scope_label.setStyleSheet("font-weight: bold;")
         layout.addWidget(scope_label)
 
-        note = QLabel("Category memberships always travel along. Choose what else to include:")
+        note = QLabel("Choose what to include:")
         note.setWordWrap(True)
         layout.addWidget(note)
 
@@ -47,6 +47,10 @@ class ExportOptionsDialog(QDialog):
             "same PDF files, matched by filename"
         )
         layout.addWidget(self.pdf_check)
+
+        self.categories_check = QCheckBox("Categories")
+        self.categories_check.setChecked(True)
+        layout.addWidget(self.categories_check)
 
         self.bookmarks_check = QCheckBox("Bookmarks")
         self.bookmarks_check.setChecked(True)
@@ -65,11 +69,11 @@ class ExportOptionsDialog(QDialog):
         layout.addWidget(self.progress_check)
 
         hint = QLabel(
-            "Tip: uncheck PDF Files for a lightweight export of just categories "
-            "plus whatever else is checked above -- the same idea as the old "
-            "\"Categories Only\"/\"Bookmarks Only\" exports, now chosen right "
-            "here. Uncheck everything except PDF Files to share books without "
-            "handing over your own notes or reading history."
+            "Tip: uncheck PDF Files for a lightweight export of just whatever "
+            "else is checked above -- the same idea as the old \"Categories "
+            "Only\"/\"Bookmarks Only\" exports, now chosen right here. Uncheck "
+            "everything except PDF Files to share books without handing over "
+            "your own categories, notes, or reading history."
         )
         hint.setWordWrap(True)
         hint.setStyleSheet("color: palette(mid);")
@@ -87,11 +91,12 @@ class ExportOptionsDialog(QDialog):
         layout.addLayout(btn_row)
 
     def options(self):
-        """(include_pdf_files, include_bookmarks, include_highlights,
-        include_reading_status, include_reading_progress) -- call only
-        after exec() returns QDialog.Accepted."""
+        """(include_pdf_files, include_categories, include_bookmarks,
+        include_highlights, include_reading_status, include_reading_progress)
+        -- call only after exec() returns QDialog.Accepted."""
         return (
             self.pdf_check.isChecked(),
+            self.categories_check.isChecked(),
             self.bookmarks_check.isChecked(),
             self.highlights_check.isChecked(),
             self.status_check.isChecked(),
