@@ -285,6 +285,7 @@ class BookDetailsDialog(QDialog):
         book = self.db.get_book(self.book_id)
         self.favorite_btn.setChecked(bool(book["is_favorite"]))
         self.favorite_btn.setText("\u2605 Favorited" if book["is_favorite"] else "\u2606 Favorite")
+        self.book_updated.emit()
 
     @staticmethod
     def _combine_multi_value(combo, custom_check, custom_edit, known_values):

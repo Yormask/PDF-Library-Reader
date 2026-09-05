@@ -2753,7 +2753,7 @@ class LibraryWindow(QMainWindow):
     def open_book_details(self, book_id):
         if self._details_dialog is None:
             self._details_dialog = BookDetailsDialog(self.db, self)
-            self._details_dialog.book_updated.connect(self.refresh_list)
+            self._details_dialog.book_updated.connect(self._refresh_list_and_categories)
             self._details_dialog.open_requested.connect(self.open_book)
         self._details_dialog.load_book(book_id)
         self._details_dialog.show()
@@ -2772,7 +2772,19 @@ class LibraryWindow(QMainWindow):
         # Deferred: this is reachable from the card/cell's own fav button or
         # right-click menu, both nested within that widget's own event chain.
         self.db.toggle_favorite(book_id)
-        QTimer.singleShot(0, self.refresh_list)
+        QTimer.singleShot(0, self._refresh_list_and_categories)
+
+    def _refresh_list_and_categories(self):
+        """Favoriting a book (or anything else that can change a category's
+        book count -- adding/removing categories, importing, etc.) needs
+        both of these refreshed together: the book list for its own
+        favorite-star indicator, and the sidebar for the count next to
+        each category name (including the automatic "Favorites" one --
+        see Database.toggle_favorite). Calling refresh_list() alone left
+        the sidebar's counts stale until something else happened to
+        rebuild it, which is what this fixes."""
+        self.refresh_list()
+        self.refresh_categories_sidebar()
 
     def remove_book(self, book_id):
         reply = QMessageBox.question(
@@ -2850,7 +2862,7 @@ class LibraryWindow(QMainWindow):
             password = entered
 
         win = ReaderWindow(
-            self.db, book_id, on_close=self.refresh_list, password=password,
+            self.db, book_id, on_close=self._refresh_list_and_categories, password=password,
             open_book_at_page=self.open_book_at_page,
         )
         self.reader_windows[book_id] = win

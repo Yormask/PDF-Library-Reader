@@ -157,7 +157,12 @@ and a distraction-free "simple text" reading mode.
   matching book at once, with a **Text** / **Image Preview** toggle so title
   matches can show as cover thumbnails — or right-click a category to
   favorite, rename, or delete it (deleting a category never deletes the
-  books themselves). Turn on **Select** in the toolbar to multi-select
+  books themselves). A **Favorites** category appears automatically the
+  first time you favorite a book (see below), pinned to the top of the
+  sidebar — kept in sync automatically, so there's nothing to manage
+  there yourself; it exists so favorited books travel through
+  category-based export the same way any other category membership does.
+  Turn on **Select** in the toolbar to multi-select
   books; with Select off, clicking a book does nothing, so you can browse
   normally without ever selecting one by accident. Once it's on:
   - **Click** a book to select/deselect it
@@ -197,7 +202,11 @@ and a distraction-free "simple text" reading mode.
     & Drawings** (bundled together, since the app already shows them as
     one unified list), **Reading Status** (unread/reading/finished and
     favorites), and **Reading Progress** (last page read). All six start
-    checked.
+    checked. Favorited books travel via *either* Categories or Reading
+    Status, independently — favoriting a book automatically files it
+    under a **Favorites** category (see above) kept in sync alongside the
+    plain favorite flag, so checking just one of those two boxes is
+    enough to bring favorite status along; you don't need both checked.
     - Uncheck everything except **PDF Files** to share books with someone
       else without handing over your own categories, notes, or reading
       history — they shouldn't receive books mysteriously pre-marked

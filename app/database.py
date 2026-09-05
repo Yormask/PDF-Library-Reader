@@ -113,6 +113,26 @@ class Database:
         self.conn.commit()
         self._migrate_books_table()
         self._migrate_highlights_table()
+        self._migrate_favorites_category()
+
+    def _migrate_favorites_category(self):
+        """One-time, for people upgrading from a version before toggle_favorite
+        started mirroring book-level favorite status into a "Favorites"
+        category: sync every already-favorited book into that category once,
+        so upgrading doesn't silently leave existing favorites uncategorized
+        until each one happens to get toggled again. Guarded by a settings
+        flag rather than re-checked on every startup, since re-running this
+        against a large library every single launch would be wasteful even
+        though it's harmless (idempotent) if it did happen to run again."""
+        if self.get_setting("favorites_category_migrated"):
+            return
+        cur = self.conn.execute("SELECT id FROM books WHERE is_favorite = 1")
+        favorite_ids = [row[0] for row in cur.fetchall()]
+        if favorite_ids:
+            fav_cat = self._get_or_create_favorites_category()
+            if fav_cat is not None:
+                self.add_books_to_category(fav_cat["id"], favorite_ids)
+        self.set_setting("favorites_category_migrated", "1")
 
     def _migrate_books_table(self):
         """Add columns introduced after the initial release, for people upgrading
@@ -252,10 +272,49 @@ class Database:
         self.conn.commit()
 
     def toggle_favorite(self, book_id):
+        """Flips is_favorite, and mirrors the change into a "Favorites"
+        category kept automatically in sync -- so a book's favorite
+        status travels through category-based exports (and shows up in
+        the category sidebar) the same way any other category membership
+        does, without needing its own separate opt-in there. The category
+        is looked up by name and recreated on demand rather than tracked
+        by a stored id, so this stays self-healing (re-favoriting a book
+        after someone deletes the category just recreates it) without any
+        extra state of its own to keep consistent."""
         self.conn.execute(
             "UPDATE books SET is_favorite = 1 - is_favorite WHERE id = ?", (book_id,)
         )
         self.conn.commit()
+        book = self.get_book(book_id)
+        if book is None:
+            return
+        fav_cat = self._get_or_create_favorites_category()
+        if fav_cat is None:
+            return
+        if book["is_favorite"]:
+            self.add_books_to_category(fav_cat["id"], [book_id])
+        else:
+            self.remove_book_from_category(fav_cat["id"], book_id)
+
+    FAVORITES_CATEGORY_NAME = "Favorites"
+
+    def _get_or_create_favorites_category(self):
+        """The special category toggle_favorite keeps in sync with
+        book-level favorite status. Created pinned as a favorite category
+        itself the first time it's needed, so it naturally sorts to the
+        top of the category sidebar alongside anything else already
+        pinned there, rather than appearing as just another alphabetical
+        entry the first time someone favorites a book."""
+        cat = self.get_category_by_name(self.FAVORITES_CATEGORY_NAME)
+        if cat is not None:
+            return cat
+        cat = self.create_category(self.FAVORITES_CATEGORY_NAME)
+        if cat is None:
+            return None
+        if not cat["is_favorite"]:
+            self.toggle_category_favorite(cat["id"])
+            cat = self.get_category_by_name(self.FAVORITES_CATEGORY_NAME)
+        return cat
 
     def update_progress(self, book_id, page):
         now = datetime.now().isoformat()
