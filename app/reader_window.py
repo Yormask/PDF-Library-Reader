@@ -54,6 +54,7 @@ from .shortcuts import (
     effective_shortcut, effective_wheel_action, load_overrides, load_wheel_overrides,
     WHEEL_ACTION_PAGE_TURN, WHEEL_ACTION_ZOOM, WHEEL_GESTURES,
 )
+from .thumbnails import ensure_page_thumbnail
 from .text_selection import (
     char_index_at_point,
     chars_from_rawdict,
@@ -1372,14 +1373,10 @@ class ReaderWindow(QMainWindow):
     def _render_thumbnail_icon(self, page_idx):
         try:
             page = self.doc[page_idx]
-            rect = page.rect
-            if rect.width <= 0 or rect.height <= 0:
+            pix = ensure_page_thumbnail(self.book_id, page_idx, page, size=self.THUMB_PANEL_SIZE)
+            if pix is None:
                 return None
-            scale = min(self.THUMB_PANEL_SIZE[0] / rect.width, self.THUMB_PANEL_SIZE[1] / rect.height)
-            pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale))
-            fmt = QImage.Format_RGB888 if pix.n < 4 else QImage.Format_RGBA8888
-            image = QImage(pix.samples, pix.width, pix.height, pix.stride, fmt)
-            return QIcon(QPixmap.fromImage(image.copy()))
+            return QIcon(pix)
         except Exception:
             return None
 

@@ -410,10 +410,13 @@ rm ~/.local/share/applications/pdf-library-reader.desktop
 
 Your library database (list of books, bookmarks, favorites, reading
 progress) lives separately at `~/.local/share/pdf-library-reader/library.db`,
-and cached cover thumbnails live at
-`~/.local/share/pdf-library-reader/thumbnails/` — delete these too if you
-want a completely clean slate. Removing a book from the library never
-deletes the underlying PDF file.
+and cached thumbnails live at `~/.local/share/pdf-library-reader/thumbnails/`
+— cover images directly in that folder, and each book's reader page
+thumbnails (used by the Pages panel — see below) in their own subfolder
+under `thumbnails/pages/`. Delete these too if you want a completely
+clean slate; removing a book from the library already deletes its own
+cached thumbnails automatically, cover and pages both. Removing a book
+from the library never deletes the underlying PDF file.
 
 ## Keyboard shortcuts (inside a book)
 
