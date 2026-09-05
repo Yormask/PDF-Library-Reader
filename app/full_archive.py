@@ -161,11 +161,31 @@ def _unique_dest_path(directory, filename):
     return candidate
 
 
-def apply_archive(db, zip_path, destination_dir):
+class ImportCancelled(Exception):
+    """Raise this from an apply_archive progress_callback to stop
+    importing further books immediately. Caught inside apply_archive
+    itself (not left to propagate to the caller, unlike write_archive's
+    export-side cancellation) because an interrupted import may already
+    have changed the library -- added books, categories, bookmarks, and
+    so on for whichever ones were processed before the cancellation --
+    and the caller needs the summary to reflect that, not just the fact
+    that it stopped."""
+
+
+def apply_archive(db, zip_path, destination_dir, progress_callback=None):
     """Extracts any PDF not already in the library (matched by filename)
     into destination_dir and adds it, then applies categories, bookmarks,
     status, favorite, and annotation to every matched book -- whether newly
-    added or already present. Returns a summary dict."""
+    added or already present. Returns a summary dict.
+
+    If given, progress_callback(index, total, filename) is called before
+    each book is processed (index starting at 1) -- for a large archive,
+    matching filenames and extracting PDFs can take a while, so a caller
+    can use this to drive a progress dialog instead of leaving the UI
+    looking frozen, the same way write_archive already supports for
+    exporting. Raising ImportCancelled from the callback stops processing
+    further books; the returned summary reflects whatever was actually
+    completed before that point, with "cancelled": True added."""
     with zipfile.ZipFile(zip_path, "r") as zf:
         manifest = json.loads(zf.read(MANIFEST_NAME))
         books = manifest.get("books", {})
@@ -187,7 +207,15 @@ def apply_archive(db, zip_path, destination_dir):
         matched, added, skipped, bookmarks_added = 0, 0, 0, 0
         highlights_added = 0
         drawings_added = 0
-        for filename, meta in books.items():
+        cancelled = False
+        total = len(books)
+        for index, (filename, meta) in enumerate(books.items(), start=1):
+            if progress_callback:
+                try:
+                    progress_callback(index, total, filename)
+                except ImportCancelled:
+                    cancelled = True
+                    break
             book = db.get_book_by_filename(filename)
             if book is None:
                 archive_entry = f"{BOOKS_DIR}/{filename}"
@@ -272,4 +300,5 @@ def apply_archive(db, zip_path, destination_dir):
         "matched": matched, "added": added, "skipped": skipped,
         "categories_created": categories_created, "bookmarks_added": bookmarks_added,
         "highlights_added": highlights_added, "drawings_added": drawings_added,
+        "cancelled": cancelled,
     }

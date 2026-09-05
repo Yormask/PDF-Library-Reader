@@ -225,10 +225,16 @@ and a distraction-free "simple text" reading mode.
   still import correctly even though nothing produces them anymore).
   Every import matches books already in your library by filename and
   reports how many matched vs. weren't found; re-importing the same file
-  is always safe (nothing gets duplicated). All of this is deliberately
-  manual and explicit rather than an always-on background sync, so two
-  devices working from a shared/synced folder can't silently overwrite
-  each other's data without you choosing to do it.
+  is always safe (nothing gets duplicated). Importing a Full Archive
+  shows a progress bar the same way exporting one does, since matching
+  filenames and extracting PDFs for potentially many books can take a
+  while — Cancel stops it partway through, but unlike a cancelled export
+  (which leaves nothing behind), whatever was already processed stays in
+  your library rather than being rolled back, and the summary afterward
+  says plainly what actually made it in before you cancelled. All of this
+  is deliberately manual and explicit rather than an always-on background
+  sync, so two devices working from a shared/synced folder can't silently
+  overwrite each other's data without you choosing to do it.
 - **Bookmarks** — save a bookmark (with an optional label) on any page inside
   a book, jump back to it later, remove it when you're done. The panel has
   its own "Bookmarks" toggle button next to "+ Bookmark" in the toolbar, so

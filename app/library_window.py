@@ -48,6 +48,7 @@ from .file_naming import format_series_number, parse_filename, sync_filename
 from .flow_layout import FlowLayout
 from .full_archive import apply_archive as apply_full_archive
 from .full_archive import build_manifest as build_archive_manifest
+from .full_archive import ImportCancelled
 from .full_archive import read_manifest as read_archive_manifest
 from .full_archive import write_archive
 from .export_dialog import ExportOptionsDialog
@@ -1174,11 +1175,40 @@ class LibraryWindow(QMainWindow):
             )
             if not destination:
                 return
+
         try:
-            summary = apply_full_archive(self.db, path, destination)
+            manifest = read_archive_manifest(path)
         except (OSError, KeyError, ValueError) as exc:
             QMessageBox.critical(self, "Import failed", f"Couldn't read that archive:\n{exc}")
             return
+
+        # Matching filenames, extracting PDFs, and applying everything else
+        # to potentially many books can take a while for a large archive --
+        # show real progress instead of leaving the window looking frozen,
+        # the same way exporting already does.
+        total = len(manifest.get("books", {}))
+        progress = QProgressDialog("Preparing import...", "Cancel", 0, total, self)
+        progress.setWindowTitle("Import")
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setMinimumDuration(0)  # show immediately, even for quick imports
+        progress.setValue(0)
+        QApplication.processEvents()
+
+        def on_progress(index, total_count, filename):
+            if progress.wasCanceled():
+                raise ImportCancelled()
+            progress.setLabelText(f"Importing {index} of {total_count}: {filename}")
+            progress.setValue(index)
+            QApplication.processEvents()
+
+        try:
+            summary = apply_full_archive(self.db, path, destination, progress_callback=on_progress)
+        except (OSError, KeyError, ValueError) as exc:
+            progress.close()
+            QMessageBox.critical(self, "Import failed", f"Couldn't read that archive:\n{exc}")
+            return
+        progress.close()
+
         self.refresh_categories_sidebar()
         self.refresh_list()
         n_created = summary["categories_created"]
@@ -1195,7 +1225,15 @@ class LibraryWindow(QMainWindow):
             msg += f"\nAdded {n_highlights} new highlight(s)."
         if n_drawings:
             msg += f"\nAdded {n_drawings} new drawing(s)."
-        QMessageBox.information(self, "Import complete", msg)
+        if summary.get("cancelled"):
+            # Unlike a cancelled export, which leaves nothing behind,
+            # whatever was processed before Cancel was clicked is already
+            # in the library -- say so plainly rather than implying
+            # nothing happened.
+            msg = "Import cancelled partway through. Here's what made it in before that:\n\n" + msg
+            QMessageBox.information(self, "Import cancelled", msg)
+        else:
+            QMessageBox.information(self, "Import complete", msg)
 
     # ------------- Multi-select & bulk actions -------------
     def toggle_book_selection(self, book_id):
